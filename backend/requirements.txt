@@ -1,2 +1,5 @@
 fastapi
 uvicorn[standard]
+sqlalchemy
+psycopg[binary]
+httpx

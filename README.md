@@ -6,6 +6,7 @@
    `./scripts/dev-up.sh`
 2. Verify backend:
    `http://localhost:8000/health`
+   `curl http://localhost:8000/health/deps`
 3. Stop services:
    `./scripts/dev-down.sh`
 4. Stream logs:
