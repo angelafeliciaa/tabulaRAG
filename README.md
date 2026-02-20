@@ -12,6 +12,7 @@
    `./scripts/dev-logs.sh` or `./scripts/dev-logs.sh backend`
 
 Services:
+- Frontend: `localhost:5173`
 - Backend: `localhost:8000`
 - Postgres: `localhost:5432`
 - Qdrant: `localhost:6333`
