@@ -7,12 +7,20 @@ from pydantic import BaseModel
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from mcp.server.fastmcp import FastMCP
 from sqlalchemy import text, select
 
 from app.db import SessionLocal, engine
 from app.models import Base, Dataset, DatasetColumn, DatasetRow
 
 app = FastAPI(title="TabulaRAG API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # FastAPI lifecycle event handler
@@ -20,6 +28,10 @@ app = FastAPI(title="TabulaRAG API")
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
+
+
+mcp = FastMCP("TabulaRAG")
+app.mount("/mcp", mcp.get_asgi_app())
 
 
 @app.get("/health")
@@ -55,7 +67,7 @@ def health_deps():
 
 
 class RenameRequest(BaseModel):
-    name: str   
+    name: str
 
 
 # checks if file is a csv or tsv based on file extension, raises HTTPException if not
@@ -295,3 +307,26 @@ def rename_table(dataset_id: int, body: RenameRequest):
         dataset.name = body.name.strip()
         db.commit()
         return {"name": dataset.name}
+
+
+@app.get("/mcp-status")
+def mcp_status():
+    return {"status": "ok", "endpoint": "/mcp"}
+
+
+@mcp.tool()
+def ping() -> dict:
+    """Check connectivity."""
+    return {"status": "ok"}
+
+
+@mcp.tool()
+def mcp_list_tables() -> list:
+    """List all ingested tables."""
+    return list_tables()
+
+
+@mcp.tool()
+def mcp_get_table_slice(dataset_id: int, offset: int = 0, limit: int = 30) -> dict:
+    """Get a slice of rows from a table by dataset_id."""
+    return get_table_slice(dataset_id, offset, limit)
