@@ -17,3 +17,19 @@ Services:
 - Backend: `localhost:8000`
 - Postgres: `localhost:5432`
 - Qdrant: `localhost:6333`
+
+## Ingestion (CSV/TSV)
+
+Upload a table for ingestion:
+
+```bash
+curl -F "file=@/path/to/data.csv" \
+  -F "dataset_name=my_table" \
+  -F "has_header=true" \
+  -F "delimiter=," \
+  http://localhost:8000/ingest
+```
+
+Notes:
+- UTF-8 CSV/TSV only.
+- `delimiter` supports `,` or tab. If omitted, it is auto-detected.
