@@ -1,4 +1,6 @@
 import sys
+from unittest.mock import patch
+
 import pytest
 from pathlib import Path
 from fastapi.testclient import TestClient
@@ -37,6 +39,13 @@ def test_engine():
 def client(test_engine):
     with TestClient(app_main.app) as c:
         yield c
+
+
+@pytest.fixture(autouse=True)
+def mock_indexing():
+    """Prevent Qdrant/embedding calls in all tests by default."""
+    with patch("app.main.index_dataset"):
+        yield
 
 
 @pytest.fixture(autouse=True)

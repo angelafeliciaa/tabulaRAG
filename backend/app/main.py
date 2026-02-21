@@ -9,15 +9,24 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from sqlalchemy import text
 
 from app.db import SessionLocal, engine
+from app.indexing import index_dataset
 from app.models import Base, Dataset, DatasetColumn, DatasetRow
+from app.routes_query import router as query_router
 
 app = FastAPI(title="TabulaRAG API")
+app.include_router(query_router)
 
 #FastAPI lifecycle event handler
 #calls Base.metadata.create_all to create database tables when app starts
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
+    # Warm up the embedding model so first query isn't slow
+    try:
+        from app.embeddings import get_model
+        get_model()
+    except Exception:
+        pass
 
 
 @app.get("/health")
@@ -179,6 +188,12 @@ def ingest_table(
             {"row_count": row_count, "id": dataset_id},
         )
         db.commit()
+
+    # Index dataset in Qdrant for vector search (non-blocking: failure shouldn't fail ingestion)
+    try:
+        index_dataset(dataset_id)
+    except Exception:
+        pass
 
     return {
         "dataset_id": dataset_id,
