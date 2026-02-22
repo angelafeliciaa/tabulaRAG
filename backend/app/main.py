@@ -3,21 +3,23 @@ import io
 import json
 import os
 from typing import Iterable, List, Tuple
-from pydantic import BaseModel
 import unicodedata
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from mcp.server.fastmcp import FastMCP
 from sqlalchemy import text, select
 
 from app.db import SessionLocal, engine
 from app.indexing import index_dataset
 from app.models import Base, Dataset, DatasetColumn, DatasetRow
+from app.mcp_server import mcp
+from app.routes_tables import router as tables_router
 from app.routes_query import router as query_router
 
+
 app = FastAPI(title="TabulaRAG API")
+app.include_router(tables_router)
 app.include_router(query_router)
 app.add_middleware(
     CORSMiddleware,
@@ -41,7 +43,6 @@ def startup() -> None:
         pass
 
 
-mcp = FastMCP("TabulaRAG")
 app.mount("/mcp", mcp.streamable_http_app)
 
 
@@ -77,8 +78,9 @@ def health_deps():
     }
 
 
-class RenameRequest(BaseModel):
-    name: str
+@app.get("/mcp-status")
+def mcp_status():
+    return {"status": "ok", "endpoint": "/mcp"}
 
 
 # checks if file is a csv or tsv based on file extension, raises HTTPException if not
@@ -248,116 +250,3 @@ def ingest_table(
         "delimiter": dataset_delimiter,
         "has_header": dataset_has_header,
     }
-
-
-@app.get("/tables")
-def list_tables():
-    with SessionLocal() as db:
-        datasets = (
-            db.execute(select(Dataset).order_by(Dataset.id.desc())).scalars().all()
-        )
-        return [
-            {
-                "dataset_id": d.id,
-                "name": d.name,
-                "source_filename": d.source_filename,
-                "row_count": d.row_count,
-                "column_count": d.column_count,
-                "created_at": d.created_at.isoformat(),
-            }
-            for d in datasets
-        ]
-
-
-@app.get("/tables/{dataset_id}/slice")
-def get_table_slice(
-    dataset_id: int,
-    offset: int = 0,
-    limit: int = 30,
-):
-    with SessionLocal() as db:
-        dataset = db.get(Dataset, dataset_id)
-        if not dataset:
-            raise HTTPException(status_code=404, detail="Table not found")
-
-        rows = (
-            db.execute(
-                select(DatasetRow)
-                .where(DatasetRow.dataset_id == dataset_id)
-                .order_by(DatasetRow.row_index)
-                .offset(offset)
-                .limit(limit)
-            )
-            .scalars()
-            .all()
-        )
-
-        columns = (
-            db.execute(
-                select(DatasetColumn.name)
-                .where(DatasetColumn.dataset_id == dataset_id)
-                .order_by(DatasetColumn.column_index)
-            )
-            .scalars()
-            .all()
-        )
-
-        return {
-            "dataset_id": dataset_id,
-            "offset": offset,
-            "limit": limit,
-            "row_count": dataset.row_count,
-            "column_count": dataset.column_count,
-            "has_header": dataset.has_header,
-            "rows": [{"row_index": r.row_index, "data": r.row_data} for r in rows],
-            "columns": columns,
-        }
-
-
-@app.delete("/tables/{dataset_id}")
-def delete_table(dataset_id: int):
-    with SessionLocal() as db:
-        dataset = db.get(Dataset, dataset_id)
-        if not dataset:
-            raise HTTPException(status_code=404, detail="Table not found")
-        db.delete(
-            dataset
-        )  # SQLAlchemy handles deleting the related DatasetColumn and DatasetRow records automatically
-        db.commit()
-        return {"deleted": dataset_id}
-
-
-@app.patch("/tables/{dataset_id}")
-def rename_table(dataset_id: int, body: RenameRequest):
-    with SessionLocal() as db:
-        dataset = db.get(Dataset, dataset_id)
-        if not dataset:
-            raise HTTPException(status_code=404, detail="Table not found")
-        if not body.name.strip():
-            raise HTTPException(status_code=400, detail="Name cannot be empty")
-        dataset.name = body.name.strip()
-        db.commit()
-        return {"name": dataset.name}
-
-
-@app.get("/mcp-status")
-def mcp_status():
-    return {"status": "ok", "endpoint": "/mcp"}
-
-
-@mcp.tool()
-def ping() -> dict:
-    """Check connectivity."""
-    return {"status": "ok"}
-
-
-@mcp.tool()
-def mcp_list_tables() -> list:
-    """List all ingested tables."""
-    return list_tables()
-
-
-@mcp.tool()
-def mcp_get_table_slice(dataset_id: int, offset: int = 0, limit: int = 30) -> dict:
-    """Get a slice of rows from a table by dataset_id."""
-    return get_table_slice(dataset_id, offset, limit)
