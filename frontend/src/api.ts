@@ -45,6 +45,13 @@ export async function uploadTable(file: File, name: string) {
   return res.json();
 }
 
+// Highlights
+export async function getHighlight(highlightId: string) {
+    const res = await fetch(`${API_BASE}/highlights/${highlightId}`);
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+}
+
 // Health
 export async function getServerStatus() {
   const res = await fetch(`${API_BASE}/health`);

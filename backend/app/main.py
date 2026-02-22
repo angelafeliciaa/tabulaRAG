@@ -35,6 +35,7 @@ def startup() -> None:
     # Warm up the embedding model so first query isn't slow
     try:
         from app.embeddings import get_model
+
         get_model()
     except Exception:
         pass
@@ -214,7 +215,7 @@ def ingest_table(
                 dataset_row = DatasetRow(
                     dataset_id=dataset_id,
                     row_index=row_index,
-                    row_data=row_obj,
+                    row_data=json.dumps(row_obj),
                 )
                 db.add(dataset_row)
                 row_count += 1
