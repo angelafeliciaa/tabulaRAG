@@ -3,10 +3,14 @@ import io
 import json
 import os
 from typing import Iterable, List, Tuple
+from pydantic import BaseModel
+import unicodedata
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from sqlalchemy import text
+from fastapi.middleware.cors import CORSMiddleware
+from mcp.server.fastmcp import FastMCP
+from sqlalchemy import text, select
 
 from app.db import SessionLocal, engine
 from app.indexing import index_dataset
@@ -15,9 +19,16 @@ from app.routes_query import router as query_router
 
 app = FastAPI(title="TabulaRAG API")
 app.include_router(query_router)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-#FastAPI lifecycle event handler
-#calls Base.metadata.create_all to create database tables when app starts
+
+# FastAPI lifecycle event handler
+# calls Base.metadata.create_all to create database tables when app starts
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
@@ -27,6 +38,10 @@ def startup() -> None:
         get_model()
     except Exception:
         pass
+
+
+mcp = FastMCP("TabulaRAG")
+app.mount("/mcp", mcp.streamable_http_app)
 
 
 @app.get("/health")
@@ -60,15 +75,20 @@ def health_deps():
         "qdrant": "ok" if qdrant_ok else "down",
     }
 
-#checks if file is a csv or tsv based on file extension, raises HTTPException if not
+
+class RenameRequest(BaseModel):
+    name: str
+
+
+# checks if file is a csv or tsv based on file extension, raises HTTPException if not
 def validate_filename(filename: str) -> None:
     if not filename.lower().endswith((".csv", ".tsv")):
         raise HTTPException(
-            status_code=400,
-            detail="File must have a .csv or .tsv extension."
+            status_code=400, detail="File must have a .csv or .tsv extension."
         )
 
-#normalizes header names by stripping whitespace, replacing empty names with col_{index}, and ensuring uniqueness by appending _{count} to duplicates
+
+# normalizes header names by stripping whitespace, replacing empty names with col_{index}, and ensuring uniqueness by appending _{count} to duplicates
 def _normalize_headers(headers: List[str]) -> List[str]:
     seen = {}
     normalized = []
@@ -86,12 +106,27 @@ def _normalize_headers(headers: List[str]) -> List[str]:
     return normalized
 
 
+NULL_VALUES = {"null", "none", "na", "n/a", "nan", "-", ""}
+
+
+def _normalize_value(value: str) -> str | None:
+    if value is None:
+        return None
+    value = unicodedata.normalize("NFC", value)
+    value = value.replace("\xa0", " ")
+    value = " ".join(value.split())  # collapse extra whitespace
+    if value.lower() in NULL_VALUES:
+        return None
+    return value
+
+
 def _detect_delimiter(filename: str | None) -> str:
     if filename and filename.lower().endswith(".tsv"):
         return "\t"
     if filename and filename.lower().endswith(".csv"):
         return ","
     return ","
+
 
 def _iter_rows(
     upload: UploadFile,
@@ -107,7 +142,9 @@ def _iter_rows(
     reader = csv.reader(text_stream, delimiter=detected_delimiter)
 
     try:
-        first_row = next(reader) #gets the first row of the file to determine headers and column count
+        first_row = next(
+            reader
+        )  # gets the first row of the file to determine headers and column count
     except StopIteration:
         raise HTTPException(status_code=400, detail="Empty file.")
 
@@ -116,9 +153,11 @@ def _iter_rows(
         rows_iter = reader
     else:
         headers = _normalize_headers([f"col_{i + 1}" for i in range(len(first_row))])
+
         def row_iter() -> Iterable[List[str]]:
             yield first_row
             yield from reader
+
         rows_iter = row_iter()
 
     return headers, rows_iter, detected_delimiter
@@ -146,16 +185,18 @@ def ingest_table(
             has_header=has_header,
             column_count=len(headers),
         )
-        db.add(dataset) #adds the new dataset to the session, which assigns it an ID after flush() is called
-        db.flush() #sends it to the database to get the generated ID, but does not commit yet so it can be rolled back if needed
+        db.add(
+            dataset
+        )  # adds the new dataset to the session, which assigns it an ID after flush() is called
+        db.flush()  # sends it to the database to get the generated ID, but does not commit yet so it can be rolled back if needed
 
         db.add_all(
             [
                 DatasetColumn(dataset_id=dataset.id, column_index=i, name=col_name)
                 for i, col_name in enumerate(headers)
             ]
-        ) #creates a DatasetColumn object for each header and adds them to the session, associating them with the dataset by dataset_id
-        db.commit() #commits the dataset to the database
+        )  # creates a DatasetColumn object for each header and adds them to the session, associating them with the dataset by dataset_id
+        db.commit()  # commits the dataset to the database
         dataset_id = dataset.id
         dataset_name_value = dataset.name
         dataset_delimiter = dataset.delimiter
@@ -166,11 +207,14 @@ def ingest_table(
     try:
         with SessionLocal() as db:
             for row_index, row in enumerate(rows_iter):
-                row_obj = {headers[i]: (row[i] if i < len(row) else None) for i in range(len(headers))}
+                row_obj = {
+                    headers[i]: _normalize_value(row[i] if i < len(row) else None)
+                    for i in range(len(headers))
+                }
                 dataset_row = DatasetRow(
                     dataset_id=dataset_id,
                     row_index=row_index,
-                    row_data=json.dumps(row_obj)
+                    row_data=row_obj,
                 )
                 db.add(dataset_row)
                 row_count += 1
@@ -180,8 +224,8 @@ def ingest_table(
             db.execute(text("DELETE FROM datasets WHERE id = :id"), {"id": dataset_id})
             db.commit()
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}") from exc
-    #update the row count for the dataset after all rows have been inserted, using a raw SQL UPDATE statement for efficiency
-    #look at database in __init__.py
+    # update the row count for the dataset after all rows have been inserted, using a raw SQL UPDATE statement for efficiency
+    # look at database in __init__.py
     with SessionLocal() as db:
         db.execute(
             text("UPDATE datasets SET row_count = :row_count WHERE id = :id"),
@@ -203,3 +247,116 @@ def ingest_table(
         "delimiter": dataset_delimiter,
         "has_header": dataset_has_header,
     }
+
+
+@app.get("/tables")
+def list_tables():
+    with SessionLocal() as db:
+        datasets = (
+            db.execute(select(Dataset).order_by(Dataset.id.desc())).scalars().all()
+        )
+        return [
+            {
+                "dataset_id": d.id,
+                "name": d.name,
+                "source_filename": d.source_filename,
+                "row_count": d.row_count,
+                "column_count": d.column_count,
+                "created_at": d.created_at.isoformat(),
+            }
+            for d in datasets
+        ]
+
+
+@app.get("/tables/{dataset_id}/slice")
+def get_table_slice(
+    dataset_id: int,
+    offset: int = 0,
+    limit: int = 30,
+):
+    with SessionLocal() as db:
+        dataset = db.get(Dataset, dataset_id)
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Table not found")
+
+        rows = (
+            db.execute(
+                select(DatasetRow)
+                .where(DatasetRow.dataset_id == dataset_id)
+                .order_by(DatasetRow.row_index)
+                .offset(offset)
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+
+        columns = (
+            db.execute(
+                select(DatasetColumn.name)
+                .where(DatasetColumn.dataset_id == dataset_id)
+                .order_by(DatasetColumn.column_index)
+            )
+            .scalars()
+            .all()
+        )
+
+        return {
+            "dataset_id": dataset_id,
+            "offset": offset,
+            "limit": limit,
+            "row_count": dataset.row_count,
+            "column_count": dataset.column_count,
+            "has_header": dataset.has_header,
+            "rows": [{"row_index": r.row_index, "data": r.row_data} for r in rows],
+            "columns": columns,
+        }
+
+
+@app.delete("/tables/{dataset_id}")
+def delete_table(dataset_id: int):
+    with SessionLocal() as db:
+        dataset = db.get(Dataset, dataset_id)
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Table not found")
+        db.delete(
+            dataset
+        )  # SQLAlchemy handles deleting the related DatasetColumn and DatasetRow records automatically
+        db.commit()
+        return {"deleted": dataset_id}
+
+
+@app.patch("/tables/{dataset_id}")
+def rename_table(dataset_id: int, body: RenameRequest):
+    with SessionLocal() as db:
+        dataset = db.get(Dataset, dataset_id)
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Table not found")
+        if not body.name.strip():
+            raise HTTPException(status_code=400, detail="Name cannot be empty")
+        dataset.name = body.name.strip()
+        db.commit()
+        return {"name": dataset.name}
+
+
+@app.get("/mcp-status")
+def mcp_status():
+    return {"status": "ok", "endpoint": "/mcp"}
+
+
+@mcp.tool()
+def ping() -> dict:
+    """Check connectivity."""
+    return {"status": "ok"}
+
+
+@mcp.tool()
+def mcp_list_tables() -> list:
+    """List all ingested tables."""
+    return list_tables()
+
+
+@mcp.tool()
+def mcp_get_table_slice(dataset_id: int, offset: int = 0, limit: int = 30) -> dict:
+    """Get a slice of rows from a table by dataset_id."""
+    return get_table_slice(dataset_id, offset, limit)
