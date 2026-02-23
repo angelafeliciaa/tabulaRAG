@@ -1,17 +1,21 @@
 import csv
 import io
-import json
 import os
 from typing import Iterable, List, Tuple
 import unicodedata
-
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text, select
+from sqlalchemy import insert, text, select
 from contextlib import asynccontextmanager
-
 from app.db import SessionLocal, engine
+from app.index_jobs import (
+    mark_index_job_error,
+    mark_index_job_ready,
+    queue_index_job,
+    start_index_job,
+    update_index_job,
+)
 from app.indexing import index_dataset
 from app.models import Base, Dataset, DatasetColumn, DatasetRow
 from app.mcp_server import mcp
@@ -112,6 +116,9 @@ def _normalize_headers(headers: List[str]) -> List[str]:
 
 
 NULL_VALUES = {"null", "none", "na", "n/a", "nan", "-", ""}
+ROW_INSERT_BATCH_SIZE = int(os.getenv("ROW_INSERT_BATCH_SIZE", "5000"))
+MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "100"))
+MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
 
 def _normalize_value(value: str) -> str | None:
@@ -123,6 +130,22 @@ def _normalize_value(value: str) -> str | None:
     if value.lower() in NULL_VALUES:
         return None
     return value
+
+
+def validate_upload_size(upload: UploadFile) -> None:
+    try:
+        upload.file.seek(0, os.SEEK_END)
+        size_bytes = upload.file.tell()
+        upload.file.seek(0)
+    except Exception:
+        # Fallback to best effort if stream size is unavailable.
+        return
+
+    if size_bytes > MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File size exceeds {MAX_UPLOAD_SIZE_MB} MB limit.",
+        )
 
 
 def _detect_delimiter(filename: str | None) -> str:
@@ -168,8 +191,24 @@ def _iter_rows(
     return headers, rows_iter, detected_delimiter
 
 
+def _index_dataset_safe(dataset_id: int, total_rows: int) -> None:
+    start_index_job(dataset_id, total_rows)
+
+    try:
+        index_dataset(
+            dataset_id,
+            progress_callback=lambda processed, total: update_index_job(
+                dataset_id, processed, total
+            ),
+        )
+        mark_index_job_ready(dataset_id, total_rows)
+    except Exception as exc:
+        mark_index_job_error(dataset_id, total_rows, f"Indexing failed: {exc}")
+
+
 @app.post("/ingest")
 def ingest_table(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     dataset_name: str | None = Form(None),
     has_header: bool = Form(True),
@@ -177,6 +216,7 @@ def ingest_table(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename.")
     validate_filename(file.filename)
+    validate_upload_size(file)
 
     headers, rows_iter, detected_delimiter = _iter_rows(file, has_header)
 
@@ -208,21 +248,30 @@ def ingest_table(
         dataset_has_header = dataset.has_header
 
     row_count = 0
-    # Insert rows using SQLAlchemy ORM for compatibility with both SQLite and PostgreSQL
+    # Insert rows in batches for better throughput on large files.
     try:
         with SessionLocal() as db:
+            batch_rows = []
             for row_index, row in enumerate(rows_iter):
                 row_obj = {
                     headers[i]: _normalize_value(row[i] if i < len(row) else None)
                     for i in range(len(headers))
                 }
-                dataset_row = DatasetRow(
-                    dataset_id=dataset_id,
-                    row_index=row_index,
-                    row_data=json.dumps(row_obj),
+                batch_rows.append(
+                    {
+                        "dataset_id": dataset_id,
+                        "row_index": row_index,
+                        "row_data": row_obj,
+                    }
                 )
-                db.add(dataset_row)
-                row_count += 1
+                if len(batch_rows) >= ROW_INSERT_BATCH_SIZE:
+                    db.execute(insert(DatasetRow), batch_rows)
+                    row_count += len(batch_rows)
+                    batch_rows.clear()
+
+            if batch_rows:
+                db.execute(insert(DatasetRow), batch_rows)
+                row_count += len(batch_rows)
             db.commit()
     except Exception as exc:
         with SessionLocal() as db:
@@ -238,11 +287,9 @@ def ingest_table(
         )
         db.commit()
 
-    # Index dataset in Qdrant for vector search (non-blocking: failure shouldn't fail ingestion)
-    try:
-        index_dataset(dataset_id)
-    except Exception:
-        pass
+    # Start vector indexing after response so uploads don't block on embedding/Qdrant upserts.
+    queue_index_job(dataset_id, row_count)
+    background_tasks.add_task(_index_dataset_safe, dataset_id, row_count)
 
     return {
         "dataset_id": dataset_id,

@@ -1,5 +1,5 @@
 import json
-from typing import Dict, List
+from typing import Callable, Dict, List, Optional
 
 from qdrant_client import models
 from sqlalchemy import text
@@ -11,7 +11,10 @@ from app.qdrant_client import ensure_collection, ensure_text_index, upsert_vecto
 EMBED_BATCH_SIZE = 256
 
 
-def index_dataset(dataset_id: int) -> None:
+def index_dataset(
+    dataset_id: int,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+) -> None:
     """Read all rows for a dataset from PG, embed them, and upsert into Qdrant.
 
     Uses row_index as the Qdrant point ID (unique per collection).
@@ -54,6 +57,11 @@ def index_dataset(dataset_id: int) -> None:
         texts.append(serialized)
         row_datas.append(row_data)
 
+    total_rows = len(texts)
+    processed_rows = 0
+    if progress_callback:
+        progress_callback(processed_rows, total_rows)
+
     # Embed and upsert in batches
     for i in range(0, len(texts), EMBED_BATCH_SIZE):
         batch_texts = texts[i : i + EMBED_BATCH_SIZE]
@@ -73,3 +81,6 @@ def index_dataset(dataset_id: int) -> None:
             )
         ]
         upsert_vectors(dataset_id, points)
+        processed_rows += len(batch_texts)
+        if progress_callback:
+            progress_callback(processed_rows, total_rows)
