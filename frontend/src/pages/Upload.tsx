@@ -20,6 +20,8 @@ const PENDING_DELETE_SESSION_KEY = "tabularag_pending_delete";
 const PINNED_TABLES_STORAGE_KEY = "tabularag_pinned_table_ids";
 const DELETE_UNDO_WINDOW_MS = 5600;
 const SUCCESS_TOAST_MS = 2800;
+const MAX_UPLOAD_SIZE_MB = 100;
+const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
 
 type ToastState =
   | { kind: "success"; message: string }
@@ -87,6 +89,7 @@ export default function Upload() {
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const [reloadNotice, setReloadNotice] = useState<string | null>(null);
   const [deletingTableIds, setDeletingTableIds] = useState<Record<number, boolean>>({});
+  const [isDragActive, setIsDragActive] = useState(false);
   const [pinnedTableIds, setPinnedTableIds] = useState<number[]>(() => {
     try {
       const raw = window.localStorage.getItem(PINNED_TABLES_STORAGE_KEY);
@@ -698,23 +701,40 @@ export default function Upload() {
     }
   }
 
+  function validateSelectedFile(nextFile: File): string | null {
+    const lowerName = nextFile.name.toLowerCase();
+    if (!(lowerName.endsWith(".csv") || lowerName.endsWith(".tsv"))) {
+      return "File must have a .csv or .tsv extension.";
+    }
+    if (nextFile.size > MAX_UPLOAD_SIZE_BYTES) {
+      return `File is too large. Maximum size is ${MAX_UPLOAD_SIZE_MB} MB.`;
+    }
+    return null;
+  }
+
   function onSelectFile(nextFile: File | null) {
     if (busy) {
       return;
     }
-    setFile(nextFile);
     setStatus(null);
 
     if (!nextFile) {
+      setErr(null);
+      setFile(null);
       setEstimatedRows(null);
       return;
     }
 
-    if (nextFile) {
-      const withoutExt = nextFile.name.replace(/\.[^.]+$/, "");
-      setName(withoutExt || nextFile.name);
+    const validationError = validateSelectedFile(nextFile);
+    if (validationError) {
+      setErr(validationError);
+      return;
     }
 
+    setErr(null);
+    setFile(nextFile);
+    const withoutExt = nextFile.name.replace(/\.[^.]+$/, "");
+    setName(withoutExt || nextFile.name);
     setEstimatedRows(null);
     const estimateJobId = estimateJobRef.current + 1;
     estimateJobRef.current = estimateJobId;
@@ -724,6 +744,38 @@ export default function Upload() {
       }
       setEstimatedRows(rows);
     });
+  }
+
+  function onUploadDragEnter(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragActive(true);
+  }
+
+  function onUploadDragOver(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+    if (!isDragActive) {
+      setIsDragActive(true);
+    }
+  }
+
+  function onUploadDragLeave(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    const relatedTarget = event.relatedTarget as Node | null;
+    if (!relatedTarget || !event.currentTarget.contains(relatedTarget)) {
+      setIsDragActive(false);
+    }
+  }
+
+  function onUploadDrop(event: React.DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragActive(false);
+    const droppedFile = event.dataTransfer.files?.[0] || null;
+    onSelectFile(droppedFile);
   }
 
   const progressLabel =
@@ -841,7 +893,13 @@ export default function Upload() {
 
       <div className="panel upload-panel">
         {!file ? (
-          <label className="upload-drop">
+          <label
+            className={`upload-drop ${isDragActive ? "drag-active" : ""}`}
+            onDragEnter={onUploadDragEnter}
+            onDragOver={onUploadDragOver}
+            onDragLeave={onUploadDragLeave}
+            onDrop={onUploadDrop}
+          >
             <input
               type="file"
               accept=".csv,.tsv"
@@ -850,8 +908,8 @@ export default function Upload() {
             <div className="upload-icon" aria-hidden="true">
               <img src={uploadLogo} alt="" />
             </div>
-            <div className="upload-title">Upload a CSV/TSV file</div>
-            <div className="upload-subtitle">Click to select a file</div>
+            <div className="upload-title">Choose a file or drag and drop it here</div>
+            <div className="upload-subtitle">Accepts .csv &amp; .tsv formats, up to 100 MB</div>
           </label>
         ) : (
           <>

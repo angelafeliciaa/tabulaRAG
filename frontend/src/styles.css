@@ -212,6 +212,17 @@ h3 {
     justify-content: center;
     color: var(--text);
     cursor: pointer;
+    transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.upload-drop.drag-active {
+    border-color: rgba(79, 70, 229, 0.6);
+    background: rgba(79, 70, 229, 0.08);
+}
+
+:root[data-theme="dark"] .upload-drop.drag-active {
+    border-color: rgba(129, 140, 248, 0.7);
+    background: rgba(79, 70, 229, 0.14);
 }
 
 .upload-drop input {
@@ -305,6 +316,7 @@ h3 {
     from {
         background-position: 0 0;
     }
+
     to {
         background-position: 200% 0;
     }
@@ -376,14 +388,17 @@ h3 {
         opacity: 0;
         transform: translate(-50%, -10px);
     }
+
     15% {
         opacity: 1;
         transform: translate(-50%, 0);
     }
+
     70% {
         opacity: 1;
         transform: translate(-50%, 0);
     }
+
     100% {
         opacity: 0;
         transform: translate(-50%, -10px);
@@ -395,14 +410,17 @@ h3 {
         opacity: 0;
         transform: translate(-50%, -10px);
     }
+
     10% {
         opacity: 1;
         transform: translate(-50%, 0);
     }
+
     76% {
         opacity: 1;
         transform: translate(-50%, 0);
     }
+
     100% {
         opacity: 0;
         transform: translate(-50%, -8px);
@@ -735,11 +753,12 @@ ul {
 .tables-scroll {
     max-height: 144px;
     overflow: auto;
-    padding: 2px 4px 2px 2px;
+    padding: 6px 4px 2px 2px;
 }
 
 .tables-header-row {
     justify-content: space-between;
+    margin-bottom: 8px;
 }
 
 .tables-header-controls {
@@ -747,16 +766,19 @@ ul {
     align-items: center;
     gap: 8px;
     margin-left: auto;
+    flex: 1 1 auto;
+    justify-content: flex-end;
 }
 
 .tables-search-input-wrap {
     position: relative;
     display: inline-flex;
     align-items: center;
+    width: min(360px, 100%);
 }
 
 .tables-search-input {
-    width: min(300px, 100%);
+    width: 100%;
     height: 32px;
     padding: 6px 10px 6px 30px;
     background: #ffffff;
@@ -884,7 +906,7 @@ ul {
     padding: 0;
     border: none;
     background: transparent;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     overflow: visible;
 }
 
@@ -937,10 +959,10 @@ ul {
 }
 
 .list-row {
-    --table-row-control-height: 48px;
+    --table-row-control-height: 30px;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 5px;
     overflow: visible;
 }
 
@@ -950,7 +972,7 @@ ul {
     background: var(--bg-elev-2);
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 4px 8px;
+    padding: 1px 8px;
     display: flex;
     align-items: center;
     transition: background 0.16s ease, border-color 0.16s ease;
@@ -973,7 +995,8 @@ ul {
     border-radius: 8px;
     color: var(--text);
     font: inherit;
-    padding: 6px 10px;
+    min-height: calc(var(--table-row-control-height) - 4px);
+    padding: 4px 8px;
 }
 
 .rename-input::placeholder {
@@ -1043,11 +1066,11 @@ ul {
     border: 1px solid var(--border);
     border-radius: 10px;
     background: var(--bg-elev);
-    padding: 4px 8px;
+    padding: 2px 8px;
     display: flex;
     flex-direction: column;
     justify-content: center;
-    gap: 4px;
+    gap: 3px;
 }
 
 .index-job-head {
@@ -1100,6 +1123,7 @@ ul {
     from {
         background-position: 0 0;
     }
+
     to {
         background-position: 200% 0;
     }
@@ -1150,9 +1174,9 @@ ul {
     transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
 }
 
-.list-row > .icon-button.edit,
-.list-row > .icon-button.danger,
-.list-row > .icon-button.success {
+.list-row>.icon-button.edit,
+.list-row>.icon-button.danger,
+.list-row>.icon-button.success {
     width: var(--table-row-control-height);
     height: var(--table-row-control-height);
     min-width: var(--table-row-control-height);
