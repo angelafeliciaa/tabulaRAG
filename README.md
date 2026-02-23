@@ -37,3 +37,14 @@ curl -F "file=@/path/to/data.csv" \
 Notes:
 - UTF-8 CSV/TSV only.
 - `delimiter` supports `,` or tab. If omitted, it is auto-detected.
+
+## Connecting via External Tools
+
+TabulaRAG exposes two endpoints for integration with AI assistants and tool runners:
+
+| Type | URL |
+|---|---|
+| OpenAPI | `http://localhost:8000/openapi.json` |
+| MCP (Streamable HTTP) | `http://localhost:8000/mcp/mcp` |
+
+> **Note:** If your client is running outside the browser (e.g. inside Docker or a desktop app), replace `localhost` with your machine's local IP address. Run `ipconfig` (Windows) or `ifconfig` (Mac/Linux) to find it.
