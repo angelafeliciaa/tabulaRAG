@@ -5,3 +5,4 @@ psycopg[binary]
 httpx
 python-multipart
 qdrant-client[fastembed]
+mcp
