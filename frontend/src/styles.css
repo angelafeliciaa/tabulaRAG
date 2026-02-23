@@ -46,9 +46,15 @@
     box-sizing: border-box;
 }
 
+html,
 body {
     margin: 0;
-    min-height: 100vh;
+    width: 100%;
+    min-height: 100dvh;
+    background: var(--bg);
+}
+
+body {
     background:
         radial-gradient(900px 500px at 5% -5%, rgba(79, 70, 229, 0.12), transparent 60%),
         radial-gradient(800px 550px at 95% 5%, rgba(14, 165, 233, 0.12), transparent 60%),
@@ -58,7 +64,9 @@ body {
 }
 
 #root {
-    height: 100vh;
+    width: 100%;
+    min-height: 100dvh;
+    height: 100dvh;
 }
 
 a {
@@ -79,7 +87,8 @@ h3 {
 }
 
 .app-shell {
-    height: 100vh;
+    min-height: 100dvh;
+    height: 100dvh;
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -505,10 +514,10 @@ h3 {
 }
 
 .page-stack {
-    height: calc(100vh - 32px);
+    height: 100%;
     max-width: 1200px;
     margin: 0 auto;
-    padding: 16px 24px 24px;
+    padding: 16px 24px max(24px, env(safe-area-inset-bottom));
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -724,7 +733,7 @@ ul {
 .tables-scroll {
     max-height: 144px;
     overflow: auto;
-    padding-right: 4px;
+    padding: 2px 4px 2px 2px;
 }
 
 .tables-scroll ul {
@@ -736,6 +745,7 @@ ul {
     border: none;
     background: transparent;
     margin-bottom: 8px;
+    overflow: visible;
 }
 
 .tables-scroll li:last-child {
@@ -790,6 +800,7 @@ ul {
     display: flex;
     align-items: center;
     gap: 8px;
+    overflow: visible;
 }
 
 .list-item {
@@ -802,17 +813,18 @@ ul {
 }
 
 .list-item:hover {
-    background: var(--bg-elev);
+    background: #e3e8f3;
     border-color: var(--border-soft);
 }
 
 .rename-input {
     width: 100%;
-    border: none;
-    background: transparent;
+    border: 1px solid var(--border-soft);
+    background: var(--bg-elev);
+    border-radius: 8px;
     color: var(--text);
     font: inherit;
-    padding: 2px 0;
+    padding: 6px 10px;
 }
 
 .rename-input::placeholder {
@@ -842,6 +854,30 @@ ul {
     transform: none;
     box-shadow: none;
     background: transparent;
+}
+
+.uploaded-table-name {
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-family: var(--font-sans);
+    color: #111827;
+    transition: color 0.16s ease;
+}
+
+.list-item:hover .uploaded-table-name,
+.list-button:hover .uploaded-table-name,
+.list-button:focus .uploaded-table-name {
+    color: var(--text);
+}
+
+:root[data-theme="dark"] .uploaded-table-name {
+    color: #f3f4f6;
+}
+
+:root[data-theme="dark"] .list-item:hover {
+    background: #232a37;
 }
 
 .index-job {
@@ -877,8 +913,8 @@ ul {
 }
 
 .index-job-track {
-    height: 6px;
-    border: 1px solid var(--border);
+    height: 4px;
+    border: 1px solid rgba(37, 99, 235, 0.22);
     border-radius: 999px;
     background: var(--overlay);
     overflow: hidden;
@@ -897,7 +933,7 @@ ul {
 }
 
 .index-job-fill.indexing {
-    background: linear-gradient(90deg, var(--accent), var(--accent-2), var(--accent));
+    background: linear-gradient(90deg, #2563eb, #38bdf8, #2563eb);
     background-size: 200% 100%;
     animation: indexJobFlow 1.3s linear infinite;
 }
@@ -924,6 +960,14 @@ ul {
     padding: 3px 0;
 }
 
+.index-job.queued .index-job-ready {
+    color: var(--text-muted);
+}
+
+.index-job.indexing .index-job-ready {
+    color: #2563eb;
+}
+
 .index-job.error {
     border-color: rgba(239, 68, 68, 0.45);
     background: rgba(239, 68, 68, 0.08);
@@ -944,6 +988,16 @@ ul {
     justify-content: center;
     padding: 0;
     color: var(--text-muted);
+    flex-shrink: 0;
+    transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+
+.icon-button:hover,
+.icon-button:focus,
+.icon-button:focus-visible,
+.icon-button:active {
+    transform: none;
+    box-shadow: none;
 }
 
 .icon-button svg {
@@ -1090,6 +1144,14 @@ tr:hover td {
 }
 
 @media (max-width: 720px) {
+    .page {
+        padding-top: 72px;
+    }
+
+    .page-stack {
+        padding-top: 72px;
+    }
+
     .list-row {
         flex-wrap: wrap;
         align-items: flex-start;
@@ -1106,7 +1168,8 @@ tr:hover td {
     }
 
     .theme-toggle-wrap {
-        right: 16px;
+        top: 8px;
+        right: 12px;
     }
 
     .hero-logo {
@@ -1115,8 +1178,8 @@ tr:hover td {
     }
 
     .mcp-status {
-        left: 16px;
-        top: 68px;
+        left: 12px;
+        top: 8px;
     }
 
     .preview-header {

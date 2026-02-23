@@ -87,6 +87,7 @@ export default function Upload() {
   const tablesScrollRef = useRef<HTMLDivElement | null>(null);
   const previewAreaRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
   const estimateJobRef = useRef(0);
   const toastTimerRef = useRef<number | null>(null);
   const pendingDeleteRef = useRef<PendingDelete | null>(null);
@@ -305,6 +306,26 @@ export default function Upload() {
   }, [busy]);
 
   useEffect(() => {
+    if (editingId === null || busy) {
+      return;
+    }
+
+    const rafId = window.requestAnimationFrame(() => {
+      const input = renameInputRef.current;
+      if (!input) {
+        return;
+      }
+      input.focus();
+      const cursorIndex = input.value.length;
+      input.setSelectionRange(cursorIndex, cursorIndex);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [editingId, busy]);
+
+  useEffect(() => {
     return () => {
       clearToastTimer();
       const pendingDelete = pendingDeleteRef.current;
@@ -386,7 +407,7 @@ export default function Upload() {
     };
   }, [preview?.dataset_id, preview?.rows.length, previewBusy, previewErr]);
 
-  async function loadPreview(datasetId: number) {
+  const loadPreview = useCallback(async (datasetId: number) => {
     setActiveTableId(datasetId);
     setPreviewBusy(true);
     setPreviewErr(null);
@@ -400,7 +421,20 @@ export default function Upload() {
     } finally {
       setPreviewBusy(false);
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    if (tables.length === 0) {
+      setActiveTableId(null);
+      setPreview(null);
+      setPreviewErr(null);
+      setPreviewBusy(false);
+      return;
+    }
+
+    // Keep preview pinned to the most recent table (top row in Uploaded tables).
+    void loadPreview(tables[0].dataset_id);
+  }, [tables, loadPreview]);
 
   async function onUpload() {
     if (!file) {
@@ -427,11 +461,7 @@ export default function Upload() {
       const result = await uploadTable(file, name, (progress) => {
         setUploadPhase(progress.phase);
         setUploadProgress((previous) => Math.max(previous, progress.percent));
-        setStatus(
-          progress.phase === "uploading"
-            ? "Uploading file..."
-            : "Processing table rows...",
-        );
+        setStatus(progress.phase === "uploading" ? "Uploading file..." : null);
       });
       setUploadProgress(100);
       setStatus(null);
@@ -787,6 +817,19 @@ export default function Upload() {
             {tables.map((table) => {
               const indexStatus = indexStatusByTable[table.dataset_id];
               const indexState = indexStatus?.state || "ready";
+              const indexProgress = Math.max(
+                0,
+                Math.min(
+                  100,
+                  Math.round(
+                    typeof indexStatus?.progress === "number"
+                      ? indexStatus.progress
+                      : indexState === "ready"
+                        ? 100
+                        : 0,
+                  ),
+                ),
+              );
               const indexLabel =
                 indexState === "queued"
                   ? "Queued"
@@ -802,6 +845,7 @@ export default function Upload() {
                     <div className="list-item">
                       {editingId === table.dataset_id ? (
                         <input
+                          ref={renameInputRef}
                           value={editingName}
                           onChange={(event) => {
                             setEditingName(event.target.value);
@@ -832,7 +876,7 @@ export default function Upload() {
                             void loadPreview(table.dataset_id);
                           }}
                         >
-                          <span className="mono">{table.name}</span>{" "}
+                          <span className="uploaded-table-name">{table.name}</span>{" "}
                           <span className="small">
                             ({table.row_count} rows, {table.column_count} cols)
                           </span>
@@ -845,6 +889,14 @@ export default function Upload() {
                       title={indexStatus?.message || indexLabel}
                     >
                       <div className="index-job-ready">{indexLabel}</div>
+                      {indexState === "indexing" && (
+                        <div className="index-job-track" aria-hidden="true">
+                          <div
+                            className="index-job-fill indexing"
+                            style={{ width: `${Math.max(4, indexProgress)}%` }}
+                          />
+                        </div>
+                      )}
                     </div>
 
                     <button
