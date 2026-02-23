@@ -116,7 +116,7 @@ def _normalize_headers(headers: List[str]) -> List[str]:
 
 
 NULL_VALUES = {"null", "none", "na", "n/a", "nan", "-", ""}
-ROW_INSERT_BATCH_SIZE = int(os.getenv("ROW_INSERT_BATCH_SIZE", "2000"))
+ROW_INSERT_BATCH_SIZE = int(os.getenv("ROW_INSERT_BATCH_SIZE", "5000"))
 
 
 def _normalize_value(value: str) -> str | None:

@@ -1,12 +1,13 @@
 import json
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import select
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from sqlalchemy import delete, select
 
 from app.db import SessionLocal
-from app.index_jobs import get_index_jobs
+from app.index_jobs import clear_index_job, get_index_jobs
 from app.models import Dataset, DatasetColumn, DatasetRow
+from app.qdrant_client import delete_collection
 
 router = APIRouter()
 
@@ -28,6 +29,14 @@ def _normalize_row_data(raw: Any) -> Dict[str, Any]:
         except Exception:
             return {}
     return {}
+
+
+def _delete_collection_safe(dataset_id: int) -> None:
+    try:
+        delete_collection(dataset_id)
+    except Exception:
+        # Collection cleanup is best-effort and should not block API delete.
+        pass
 
 
 @router.get("/tables")
@@ -139,16 +148,21 @@ def get_table_slice(
 
 
 @router.delete("/tables/{dataset_id}")
-def delete_table(dataset_id: int):
+def delete_table(dataset_id: int, background_tasks: BackgroundTasks):
     with SessionLocal() as db:
-        dataset = db.get(Dataset, dataset_id)
-        if not dataset:
+        exists = db.execute(
+            select(Dataset.id).where(Dataset.id == dataset_id)
+        ).first()
+        if not exists:
             raise HTTPException(status_code=404, detail="Table not found")
-        db.delete(
-            dataset
-        )  # SQLAlchemy handles deleting the related DatasetColumn and DatasetRow records automatically
+        # Use direct SQL deletes to avoid expensive ORM cascade object loading.
+        db.execute(delete(DatasetRow).where(DatasetRow.dataset_id == dataset_id))
+        db.execute(delete(DatasetColumn).where(DatasetColumn.dataset_id == dataset_id))
+        db.execute(delete(Dataset).where(Dataset.id == dataset_id))
         db.commit()
-        return {"deleted": dataset_id}
+    clear_index_job(dataset_id)
+    background_tasks.add_task(_delete_collection_safe, dataset_id)
+    return {"deleted": dataset_id}
 
 
 @router.patch("/tables/{dataset_id}")

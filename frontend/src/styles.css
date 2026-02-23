@@ -322,12 +322,42 @@ h3 {
     box-shadow: var(--shadow);
     font-size: 13px;
     z-index: 3;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
     animation: toastDrop 2.4s ease forwards;
 }
 
 .toast.success {
     color: #16a34a;
     border-color: rgba(34, 197, 94, 0.4);
+}
+
+.toast.delete {
+    color: #16a34a;
+    border-color: rgba(34, 197, 94, 0.45);
+}
+
+.toast.slow {
+    animation: toastDropSlow 5.6s ease forwards;
+}
+
+.toast-action {
+    border: 1px solid rgba(79, 70, 229, 0.35);
+    background: rgba(79, 70, 229, 0.1);
+    color: var(--text);
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    box-shadow: none;
+}
+
+.toast-action:hover {
+    transform: none;
+    box-shadow: none;
+    background: rgba(79, 70, 229, 0.18);
 }
 
 @keyframes toastDrop {
@@ -346,6 +376,25 @@ h3 {
     100% {
         opacity: 0;
         transform: translate(-50%, -10px);
+    }
+}
+
+@keyframes toastDropSlow {
+    0% {
+        opacity: 0;
+        transform: translate(-50%, -10px);
+    }
+    10% {
+        opacity: 1;
+        transform: translate(-50%, 0);
+    }
+    76% {
+        opacity: 1;
+        transform: translate(-50%, 0);
+    }
+    100% {
+        opacity: 0;
+        transform: translate(-50%, -8px);
     }
 }
 

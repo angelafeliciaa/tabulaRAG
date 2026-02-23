@@ -16,6 +16,20 @@ import logo from "../images/logo.png";
 import uploadLogo from "../images/upload.png";
 
 const PENDING_UPLOAD_SESSION_KEY = "tabularag_pending_upload";
+const DELETE_UNDO_WINDOW_MS = 5600;
+const SUCCESS_TOAST_MS = 2800;
+
+type ToastState =
+  | { kind: "success"; message: string }
+  | { kind: "delete"; message: string };
+
+type PendingDelete = {
+  table: TableSummary;
+  indexStatus: TableIndexStatus;
+  previousActiveTableId: number | null;
+  previousPreview: TableSlice | null;
+  timeoutId: number;
+};
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -34,53 +48,72 @@ export default function Upload() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadPhase, setUploadPhase] = useState<"idle" | UploadProgress["phase"]>("idle");
   const [estimatedRows, setEstimatedRows] = useState<number | null>(null);
-  const [ingestedRows, setIngestedRows] = useState<number | null>(null);
-  const [ingestedColumns, setIngestedColumns] = useState<number | null>(null);
   const [preview, setPreview] = useState<TableSlice | null>(null);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [activeTableId, setActiveTableId] = useState<number | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<ToastState | null>(null);
   const [showScrollHint, setShowScrollHint] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingName, setEditingName] = useState("");
   const [reloadNotice, setReloadNotice] = useState<string | null>(null);
+  const [deletingTableIds, setDeletingTableIds] = useState<Record<number, boolean>>({});
   const [indexStatusByTable, setIndexStatusByTable] = useState<
     Record<number, TableIndexStatus>
   >({});
   const tablesScrollRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const estimateJobRef = useRef(0);
+  const toastTimerRef = useRef<number | null>(null);
+  const pendingDeleteRef = useRef<PendingDelete | null>(null);
 
   async function estimateDataRows(nextFile: File): Promise<number | null> {
     try {
-      const reader = nextFile.stream().getReader();
-      const decoder = new TextDecoder();
-      let leftover = "";
-      let lineCount = 0;
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) {
-          break;
-        }
-
-        const chunk = leftover + decoder.decode(value, { stream: true });
-        const lines = chunk.split(/\r?\n/);
-        leftover = lines.pop() ?? "";
-        lineCount += lines.length;
+      // Keep estimation lightweight: sample only the file head instead of scanning full file.
+      const sampleBytes = Math.min(nextFile.size, 512 * 1024);
+      if (sampleBytes <= 0) {
+        return null;
       }
 
-      const tail = leftover + decoder.decode();
-      if (tail.length > 0) {
-        lineCount += 1;
+      const sampleText = await nextFile.slice(0, sampleBytes).text();
+      const lines = sampleText.split(/\r?\n/);
+      const hasTrailingNewline = /\r?\n$/.test(sampleText);
+      const sampledLineCount = Math.max(
+        1,
+        lines.length - (hasTrailingNewline ? 1 : 0),
+      );
+      const avgBytesPerLine = sampleBytes / sampledLineCount;
+      if (!Number.isFinite(avgBytesPerLine) || avgBytesPerLine <= 0) {
+        return null;
       }
 
+      const estimatedTotalLines = Math.max(
+        sampledLineCount,
+        Math.round(nextFile.size / avgBytesPerLine),
+      );
       // In this UI we always upload with has_header=true.
-      return Math.max(0, lineCount - 1);
+      return Math.max(0, estimatedTotalLines - 1);
     } catch {
       return null;
     }
+  }
+
+  function clearToastTimer() {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+  }
+
+  function showSuccessToast(message: string) {
+    clearToastTimer();
+    setToast({ kind: "success", message });
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast((current) =>
+        current?.kind === "success" && current.message === message ? null : current,
+      );
+      toastTimerRef.current = null;
+    }, SUCCESS_TOAST_MS);
   }
 
   const refreshIndexStatuses = useCallback(async (nextTables: TableSummary[]) => {
@@ -171,6 +204,20 @@ export default function Upload() {
   }, [busy]);
 
   useEffect(() => {
+    return () => {
+      clearToastTimer();
+      const pendingDelete = pendingDeleteRef.current;
+      if (pendingDelete) {
+        window.clearTimeout(pendingDelete.timeoutId);
+        pendingDeleteRef.current = null;
+        void deleteTable(pendingDelete.table.dataset_id).catch(() => {
+          // Best-effort cleanup on unmount/navigation.
+        });
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (tables.length === 0) {
       setIndexStatusByTable({});
       return;
@@ -245,8 +292,6 @@ export default function Upload() {
     setStatus("Uploading file...");
     setUploadPhase("uploading");
     setUploadProgress(2);
-    setIngestedRows(null);
-    setIngestedColumns(null);
 
     try {
       const result = await uploadTable(file, name, (progress) => {
@@ -259,15 +304,12 @@ export default function Upload() {
         );
       });
       setUploadProgress(100);
-      setIngestedRows(result.rows);
-      setIngestedColumns(result.columns);
-      setStatus(
-        `Upload complete: ${result.rows.toLocaleString()} rows, ${result.columns.toLocaleString()} columns. Vector indexing continues in background.`,
-      );
+      setStatus(null);
       await refresh();
       await loadPreview(result.dataset_id);
-      setToast("File uploaded successfully");
-      window.setTimeout(() => setToast(null), 2400);
+      showSuccessToast(
+        `File Uploaded Successfully`,
+      );
       setFile(null);
       setName("Uploaded Table");
       window.sessionStorage.removeItem(PENDING_UPLOAD_SESSION_KEY);
@@ -282,22 +324,124 @@ export default function Upload() {
     }
   }
 
-  async function onDelete(datasetId: number) {
+  function defaultIndexStatusForTable(table: TableSummary): TableIndexStatus {
+    return {
+      dataset_id: table.dataset_id,
+      state: "ready",
+      progress: 100,
+      processed_rows: table.row_count,
+      total_rows: table.row_count,
+      message: "Vector index is ready.",
+      started_at: null,
+      updated_at: null,
+      finished_at: null,
+    };
+  }
+
+  function restoreDeletedTable(pending: PendingDelete) {
+    setTables((previous) => {
+      if (previous.some((table) => table.dataset_id === pending.table.dataset_id)) {
+        return previous;
+      }
+      const next = [...previous, pending.table];
+      next.sort((a, b) => b.dataset_id - a.dataset_id);
+      return next;
+    });
+    setIndexStatusByTable((previous) => ({
+      ...previous,
+      [pending.table.dataset_id]: pending.indexStatus,
+    }));
+
+    if (pending.previousActiveTableId === pending.table.dataset_id) {
+      setActiveTableId(pending.table.dataset_id);
+      setPreview(pending.previousPreview);
+    }
+  }
+
+  async function commitPendingDelete(pending: PendingDelete) {
+    const datasetId = pending.table.dataset_id;
+    setDeletingTableIds((previous) => ({ ...previous, [datasetId]: true }));
+
     try {
       await deleteTable(datasetId);
-      if (activeTableId === datasetId) {
-        setActiveTableId(null);
-        setPreview(null);
-      }
-      setIndexStatusByTable((previous) => {
+      await refresh();
+    } catch (error: unknown) {
+      setErr(getErrorMessage(error));
+      restoreDeletedTable(pending);
+    } finally {
+      setDeletingTableIds((previous) => {
         const next = { ...previous };
         delete next[datasetId];
         return next;
       });
-      await refresh();
-    } catch (error: unknown) {
-      setErr(getErrorMessage(error));
     }
+  }
+
+  async function onDelete(datasetId: number) {
+    if (busy || deletingTableIds[datasetId]) {
+      return;
+    }
+    const table = tables.find((current) => current.dataset_id === datasetId);
+    if (!table) {
+      return;
+    }
+
+    // If another delete is pending undo, commit it immediately before starting a new one.
+    const previousPendingDelete = pendingDeleteRef.current;
+    if (previousPendingDelete) {
+      window.clearTimeout(previousPendingDelete.timeoutId);
+      pendingDeleteRef.current = null;
+      void commitPendingDelete(previousPendingDelete);
+    }
+
+    clearToastTimer();
+
+    const pendingDelete: PendingDelete = {
+      table,
+      indexStatus: indexStatusByTable[datasetId] || defaultIndexStatusForTable(table),
+      previousActiveTableId: activeTableId,
+      previousPreview: preview,
+      timeoutId: 0,
+    };
+
+    setTables((previous) => previous.filter((current) => current.dataset_id !== datasetId));
+    setIndexStatusByTable((previous) => {
+      const next = { ...previous };
+      delete next[datasetId];
+      return next;
+    });
+    if (activeTableId === datasetId) {
+      setActiveTableId(null);
+      setPreview(null);
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const currentPendingDelete = pendingDeleteRef.current;
+      if (!currentPendingDelete || currentPendingDelete.table.dataset_id !== datasetId) {
+        return;
+      }
+      pendingDeleteRef.current = null;
+      setToast(null);
+      void commitPendingDelete(currentPendingDelete);
+    }, DELETE_UNDO_WINDOW_MS);
+
+    pendingDelete.timeoutId = timeoutId;
+    pendingDeleteRef.current = pendingDelete;
+    setToast({
+      kind: "delete",
+      message: `Successfully deleted table '${table.name}'`,
+    });
+  }
+
+  function onUndoDelete() {
+    const pendingDelete = pendingDeleteRef.current;
+    if (!pendingDelete) {
+      return;
+    }
+    window.clearTimeout(pendingDelete.timeoutId);
+    pendingDeleteRef.current = null;
+    restoreDeletedTable(pendingDelete);
+    showSuccessToast(`Restored table '${pendingDelete.table.name}'`);
   }
 
   async function onRename(datasetId: number) {
@@ -326,8 +470,6 @@ export default function Upload() {
       return;
     }
     setFile(nextFile);
-    setIngestedRows(null);
-    setIngestedColumns(null);
     setStatus(null);
 
     if (!nextFile) {
@@ -359,6 +501,13 @@ export default function Upload() {
     uploadPhase === "processing"
       ? `${uploadProgress.toFixed(1)}%`
       : `${Math.round(uploadProgress)}%`;
+  const estimatedProcessedRows =
+    estimatedRows === null
+      ? null
+      : Math.min(
+          estimatedRows,
+          Math.max(0, Math.round((Math.max(0, Math.min(100, uploadProgress)) / 100) * estimatedRows)),
+        );
   const activeTableName =
     activeTableId !== null
       ? tables.find((table) => table.dataset_id === activeTableId)?.name || "Table"
@@ -366,7 +515,16 @@ export default function Upload() {
 
   return (
     <div className="page page-stack">
-      {toast && <div className="toast success">{toast}</div>}
+      {toast && (
+        <div className={`toast ${toast.kind === "delete" ? "delete slow" : "success"}`}>
+          <span>{toast.message}</span>
+          {toast.kind === "delete" && (
+            <button type="button" className="toast-action" onClick={onUndoDelete}>
+              Undo
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="hero">
         <div className="hero-title-row">
@@ -450,19 +608,13 @@ export default function Upload() {
                 : "Normalizing cells and writing rows..."}
             </div>
             <div className="upload-progress-rows">
-              {estimatedRows === null
-                ? "Rows in file: estimating..."
-                : `Rows in file: ~${estimatedRows.toLocaleString()} (estimated)`}
+              {estimatedRows === null || estimatedProcessedRows === null
+                ? "Rows: estimating..."
+                : `Rows: ${estimatedProcessedRows.toLocaleString()} / ${estimatedRows.toLocaleString()} (estimated)`}
             </div>
           </div>
         )}
         {status && !err && <p className="small status-info">{status}</p>}
-        {!busy && ingestedRows !== null && (
-          <p className="small status-success">
-            Ingested rows: {ingestedRows.toLocaleString()}
-            {ingestedColumns !== null ? ` | columns: ${ingestedColumns.toLocaleString()}` : ""}
-          </p>
-        )}
       </div>
 
       <div className="panel">
@@ -563,7 +715,7 @@ export default function Upload() {
                       }}
                       aria-label={editingId === table.dataset_id ? "Save name" : `Rename ${table.name}`}
                       title={editingId === table.dataset_id ? "Save" : "Rename"}
-                      disabled={busy}
+                      disabled={busy || Boolean(deletingTableIds[table.dataset_id])}
                     >
                       {editingId === table.dataset_id ? (
                         <svg viewBox="0 0 24 24" role="presentation">
@@ -584,6 +736,7 @@ export default function Upload() {
                       }}
                       aria-label={`Delete ${table.name}`}
                       title="Delete table"
+                      disabled={busy || Boolean(deletingTableIds[table.dataset_id])}
                     >
                       <svg viewBox="0 0 24 24" role="presentation">
                         <path d="M9 3a1 1 0 0 0-1 1v1H5a1 1 0 0 0 0 2h1v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7h1a1 1 0 1 0 0-2h-3V4a1 1 0 0 0-1-1H9zm1 2h4v0H10zm-1 4a1 1 0 0 1 2 0v8a1 1 0 1 1-2 0V9zm6-1a1 1 0 0 1 1 1v8a1 1 0 1 1-2 0V9a1 1 0 0 1 1-1z" />
