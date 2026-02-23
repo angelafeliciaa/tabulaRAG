@@ -258,8 +258,14 @@ export async function getHighlight(highlightId: string): Promise<HighlightRespon
   return (await res.json()) as HighlightResponse;
 }
 
-export async function deleteTable(datasetId: number): Promise<{ deleted: number }> {
-  const res = await fetch(`${API_BASE}/tables/${datasetId}`, { method: "DELETE" });
+export async function deleteTable(
+  datasetId: number,
+  options?: { keepalive?: boolean },
+): Promise<{ deleted: number }> {
+  const res = await fetch(`${API_BASE}/tables/${datasetId}`, {
+    method: "DELETE",
+    keepalive: options?.keepalive,
+  });
   if (!res.ok) {
     throw new Error(await res.text());
   }

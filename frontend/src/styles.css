@@ -784,6 +784,16 @@ li {
     padding: 2px 0;
 }
 
+.rename-input::placeholder {
+    color: var(--text-muted);
+}
+
+.rename-input.invalid::placeholder {
+    color: #dc2626;
+    opacity: 1;
+    font-weight: 600;
+}
+
 .list-button {
     width: 100%;
     text-align: left;

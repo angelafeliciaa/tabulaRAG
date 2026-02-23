@@ -16,6 +16,7 @@ import logo from "../images/logo.png";
 import uploadLogo from "../images/upload.png";
 
 const PENDING_UPLOAD_SESSION_KEY = "tabularag_pending_upload";
+const PENDING_DELETE_SESSION_KEY = "tabularag_pending_delete";
 const DELETE_UNDO_WINDOW_MS = 5600;
 const SUCCESS_TOAST_MS = 2800;
 
@@ -32,10 +33,30 @@ type PendingDelete = {
 };
 
 function getErrorMessage(error: unknown): string {
+  const normalize = (message: string): string => {
+    const trimmed = message.trim();
+    if (!(trimmed.startsWith("{") && trimmed.endsWith("}"))) {
+      return message;
+    }
+    try {
+      const parsed = JSON.parse(trimmed) as { detail?: unknown };
+      if (typeof parsed.detail === "string" && parsed.detail.trim()) {
+        return parsed.detail;
+      }
+    } catch {
+      // Keep original message when response is not valid JSON.
+    }
+    return message;
+  };
+
   if (error instanceof Error) {
-    return error.message;
+    return normalize(error.message);
   }
-  return String(error);
+  return normalize(String(error));
+}
+
+function isTableNotFoundError(error: unknown): boolean {
+  return /table not found/i.test(getErrorMessage(error));
 }
 
 export default function Upload() {
@@ -56,6 +77,7 @@ export default function Upload() {
   const [showScrollHint, setShowScrollHint] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingName, setEditingName] = useState("");
+  const [renameHintId, setRenameHintId] = useState<number | null>(null);
   const [reloadNotice, setReloadNotice] = useState<string | null>(null);
   const [deletingTableIds, setDeletingTableIds] = useState<Record<number, boolean>>({});
   const [indexStatusByTable, setIndexStatusByTable] = useState<
@@ -66,6 +88,7 @@ export default function Upload() {
   const estimateJobRef = useRef(0);
   const toastTimerRef = useRef<number | null>(null);
   const pendingDeleteRef = useRef<PendingDelete | null>(null);
+  const pendingDeleteIdsRef = useRef<Set<number>>(new Set());
 
   async function estimateDataRows(nextFile: File): Promise<number | null> {
     try {
@@ -150,7 +173,9 @@ export default function Upload() {
   }, []);
 
   const refresh = useCallback(async () => {
-    const nextTables = await listTables();
+    const nextTables = (await listTables()).filter(
+      (table) => !pendingDeleteIdsRef.current.has(table.dataset_id),
+    );
     setTables(nextTables);
     try {
       await refreshIndexStatuses(nextTables);
@@ -158,6 +183,38 @@ export default function Upload() {
       // Keep table list usable even if status polling fails.
     }
   }, [refreshIndexStatuses]);
+
+  function setPendingDeleteSession(datasetId: number, tableName: string) {
+    window.sessionStorage.setItem(
+      PENDING_DELETE_SESSION_KEY,
+      JSON.stringify({
+        dataset_id: datasetId,
+        table_name: tableName,
+        created_at: new Date().toISOString(),
+      }),
+    );
+  }
+
+  function clearPendingDeleteSession(datasetId?: number) {
+    if (datasetId === undefined) {
+      window.sessionStorage.removeItem(PENDING_DELETE_SESSION_KEY);
+      return;
+    }
+
+    const pendingRaw = window.sessionStorage.getItem(PENDING_DELETE_SESSION_KEY);
+    if (!pendingRaw) {
+      return;
+    }
+
+    try {
+      const pending = JSON.parse(pendingRaw) as { dataset_id?: unknown };
+      if (typeof pending.dataset_id === "number" && pending.dataset_id === datasetId) {
+        window.sessionStorage.removeItem(PENDING_DELETE_SESSION_KEY);
+      }
+    } catch {
+      window.sessionStorage.removeItem(PENDING_DELETE_SESSION_KEY);
+    }
+  }
 
   useEffect(() => {
     const pendingRaw = window.sessionStorage.getItem(PENDING_UPLOAD_SESSION_KEY);
@@ -180,6 +237,48 @@ export default function Upload() {
       `Page was reloaded during upload for ${fileLabel}. Check Uploaded tables below for the result.`,
     );
   }, []);
+
+  useEffect(() => {
+    const pendingRaw = window.sessionStorage.getItem(PENDING_DELETE_SESSION_KEY);
+    if (!pendingRaw) {
+      return;
+    }
+
+    let datasetId: number | null = null;
+
+    try {
+      const pending = JSON.parse(pendingRaw) as { dataset_id?: unknown };
+      if (typeof pending.dataset_id === "number" && Number.isFinite(pending.dataset_id)) {
+        datasetId = pending.dataset_id;
+      }
+    } catch {
+      window.sessionStorage.removeItem(PENDING_DELETE_SESSION_KEY);
+      return;
+    }
+
+    if (datasetId === null) {
+      window.sessionStorage.removeItem(PENDING_DELETE_SESSION_KEY);
+      return;
+    }
+
+    pendingDeleteIdsRef.current.add(datasetId);
+
+    void (async () => {
+      try {
+        await deleteTable(datasetId);
+      } catch (error: unknown) {
+        if (!isTableNotFoundError(error)) {
+          setErr(getErrorMessage(error));
+        }
+      } finally {
+        pendingDeleteIdsRef.current.delete(datasetId);
+        clearPendingDeleteSession(datasetId);
+        await refresh().catch(() => {
+          // Keep UI responsive even if immediate refresh fails.
+        });
+      }
+    })();
+  }, [refresh]);
 
   useEffect(() => {
     refresh().catch((error: unknown) => {
@@ -210,9 +309,13 @@ export default function Upload() {
       if (pendingDelete) {
         window.clearTimeout(pendingDelete.timeoutId);
         pendingDeleteRef.current = null;
-        void deleteTable(pendingDelete.table.dataset_id).catch(() => {
-          // Best-effort cleanup on unmount/navigation.
-        });
+        void deleteTable(pendingDelete.table.dataset_id, { keepalive: true })
+          .catch(() => {
+            // Best-effort cleanup on unmount/navigation.
+          })
+          .finally(() => {
+            clearPendingDeleteSession(pendingDelete.table.dataset_id);
+          });
       }
     };
   }, []);
@@ -339,6 +442,8 @@ export default function Upload() {
   }
 
   function restoreDeletedTable(pending: PendingDelete) {
+    pendingDeleteIdsRef.current.delete(pending.table.dataset_id);
+    clearPendingDeleteSession(pending.table.dataset_id);
     setTables((previous) => {
       if (previous.some((table) => table.dataset_id === pending.table.dataset_id)) {
         return previous;
@@ -364,11 +469,15 @@ export default function Upload() {
 
     try {
       await deleteTable(datasetId);
-      await refresh();
     } catch (error: unknown) {
+      if (isTableNotFoundError(error)) {
+        return;
+      }
       setErr(getErrorMessage(error));
       restoreDeletedTable(pending);
     } finally {
+      pendingDeleteIdsRef.current.delete(datasetId);
+      clearPendingDeleteSession(datasetId);
       setDeletingTableIds((previous) => {
         const next = { ...previous };
         delete next[datasetId];
@@ -395,6 +504,7 @@ export default function Upload() {
     }
 
     clearToastTimer();
+    setErr(null);
 
     const pendingDelete: PendingDelete = {
       table,
@@ -404,6 +514,8 @@ export default function Upload() {
       timeoutId: 0,
     };
 
+    pendingDeleteIdsRef.current.add(datasetId);
+    setPendingDeleteSession(datasetId, table.name);
     setTables((previous) => previous.filter((current) => current.dataset_id !== datasetId));
     setIndexStatusByTable((previous) => {
       const next = { ...previous };
@@ -440,6 +552,7 @@ export default function Upload() {
     }
     window.clearTimeout(pendingDelete.timeoutId);
     pendingDeleteRef.current = null;
+    clearPendingDeleteSession(pendingDelete.table.dataset_id);
     restoreDeletedTable(pendingDelete);
     showSuccessToast(`Restored table '${pendingDelete.table.name}'`);
   }
@@ -451,7 +564,9 @@ export default function Upload() {
 
     const nextName = editingName.trim();
     if (!nextName) {
-      setErr("Name cannot be empty.");
+      setRenameHintId(datasetId);
+      setEditingName("");
+      setErr(null);
       return;
     }
 
@@ -459,6 +574,7 @@ export default function Upload() {
       await renameTable(datasetId, nextName);
       setEditingId(null);
       setEditingName("");
+      setRenameHintId(null);
       await refresh();
     } catch (error: unknown) {
       setErr(getErrorMessage(error));
@@ -505,9 +621,9 @@ export default function Upload() {
     estimatedRows === null
       ? null
       : Math.min(
-          estimatedRows,
-          Math.max(0, Math.round((Math.max(0, Math.min(100, uploadProgress)) / 100) * estimatedRows)),
-        );
+        estimatedRows,
+        Math.max(0, Math.round((Math.max(0, Math.min(100, uploadProgress)) / 100) * estimatedRows)),
+      );
   const activeTableName =
     activeTableId !== null
       ? tables.find((table) => table.dataset_id === activeTableId)?.name || "Table"
@@ -596,9 +712,8 @@ export default function Upload() {
             </div>
             <div className="upload-progress-track">
               <div
-                className={`upload-progress-fill ${
-                  uploadPhase === "processing" ? "processing" : ""
-                }`}
+                className={`upload-progress-fill ${uploadPhase === "processing" ? "processing" : ""
+                  }`}
                 style={{ width: `${Math.max(0, Math.min(100, uploadProgress))}%` }}
               />
             </div>
@@ -610,7 +725,7 @@ export default function Upload() {
             <div className="upload-progress-rows">
               {estimatedRows === null || estimatedProcessedRows === null
                 ? "Rows: estimating..."
-                : `Rows: ${estimatedProcessedRows.toLocaleString()} / ${estimatedRows.toLocaleString()} (estimated)`}
+                : `Rows: ${estimatedProcessedRows.toLocaleString()} / ${estimatedRows.toLocaleString()}`}
             </div>
           </div>
         )}
@@ -652,13 +767,25 @@ export default function Upload() {
                       {editingId === table.dataset_id ? (
                         <input
                           value={editingName}
-                          onChange={(event) => setEditingName(event.target.value)}
+                          onChange={(event) => {
+                            setEditingName(event.target.value);
+                            if (renameHintId === table.dataset_id) {
+                              setRenameHintId(null);
+                            }
+                          }}
                           onKeyDown={(event) => {
                             if (event.key === "Enter") {
                               void onRename(table.dataset_id);
                             }
                           }}
-                          className="rename-input"
+                          className={`rename-input ${
+                            renameHintId === table.dataset_id ? "invalid" : ""
+                          }`}
+                          placeholder={
+                            renameHintId === table.dataset_id
+                              ? "Name cannot be empty."
+                              : "Enter table name"
+                          }
                           disabled={busy}
                         />
                       ) : (
@@ -711,6 +838,7 @@ export default function Upload() {
                         } else {
                           setEditingId(table.dataset_id);
                           setEditingName(table.name);
+                          setRenameHintId(null);
                         }
                       }}
                       aria-label={editingId === table.dataset_id ? "Save name" : `Rename ${table.name}`}
