@@ -47,14 +47,22 @@ export async function uploadTable(file: File, name: string) {
 
 // Highlights
 export async function getHighlight(highlightId: string) {
-    const res = await fetch(`${API_BASE}/highlights/${highlightId}`);
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
+  const res = await fetch(`${API_BASE}/highlights/${highlightId}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }
 
 // Health
-export async function getServerStatus() {
-  const res = await fetch(`${API_BASE}/health`);
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+export async function getServerStatus(): Promise<"online" | "offline"> {
+    try {
+        const res = await fetch(`${API_BASE}/health`);
+        console.log("health response:", res.status);
+        if (!res.ok) return "offline";
+        const data = await res.json();
+        console.log("health data:", data);
+        return data.status === "ok" ? "online" : "offline";
+    } catch (e) {
+        console.log("health error:", e);
+        return "offline";
+    }
 }
