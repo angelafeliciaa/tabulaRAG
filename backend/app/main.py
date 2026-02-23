@@ -9,6 +9,7 @@ import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text, select
+from contextlib import asynccontextmanager
 
 from app.db import SessionLocal, engine
 from app.indexing import index_dataset
@@ -18,32 +19,33 @@ from app.routes_tables import router as tables_router
 from app.routes_query import router as query_router
 
 
-app = FastAPI(title="TabulaRAG API")
-app.include_router(tables_router)
-app.include_router(query_router)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    try:
+        from app.embeddings import get_model
+        get_model()
+    except Exception:
+        pass
+
+    async with mcp.session_manager.run():
+        yield
+
+
+app = FastAPI(title="TabulaRAG API", lifespan=lifespan)
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# FastAPI lifecycle event handler
-# calls Base.metadata.create_all to create database tables when app starts
-@app.on_event("startup")
-def startup() -> None:
-    Base.metadata.create_all(bind=engine)
-    # Warm up the embedding model so first query isn't slow
-    try:
-        from app.embeddings import get_model
-
-        get_model()
-    except Exception:
-        pass
-
-
-app.mount("/mcp", mcp.streamable_http_app)
+app.include_router(tables_router)
+app.include_router(query_router)
+app.mount("/mcp", mcp.streamable_http_app())
 
 
 @app.get("/health")
