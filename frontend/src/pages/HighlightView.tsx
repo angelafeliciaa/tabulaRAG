@@ -110,7 +110,8 @@ export default function HighlightView() {
       setSlice({
         ...loadedSlice,
         rowFrom,
-        highlight: { rows: [currentTarget.row], cols: currentTarget.cols },
+        // Highlight the full matching row across all visible columns.
+        highlight: { rows: [currentTarget.row], cols: loadedSlice.columns },
       });
     })().catch((error: unknown) => {
       if (!cancelled) {

@@ -743,14 +743,6 @@ export default function Upload() {
             {tables.map((table) => {
               const indexStatus = indexStatusByTable[table.dataset_id];
               const indexState = indexStatus?.state || "ready";
-              const indexPercent = Math.max(
-                0,
-                Math.min(100, Math.round(indexStatus?.progress ?? 100)),
-              );
-              const indexRowsDone = indexStatus?.processed_rows ?? table.row_count;
-              const indexRowsTotal = indexStatus?.total_rows || table.row_count;
-              const isIndexing =
-                indexState === "queued" || indexState === "indexing";
               const indexLabel =
                 indexState === "queued"
                   ? "Queued"
@@ -808,25 +800,7 @@ export default function Upload() {
                       className={`index-job ${indexState}`}
                       title={indexStatus?.message || indexLabel}
                     >
-                      {isIndexing ? (
-                        <>
-                          <div className="index-job-head">
-                            <span className="index-job-label">{indexLabel}</span>
-                            <span className="index-job-percent mono">{indexPercent}%</span>
-                          </div>
-                          <div className="index-job-track">
-                            <div
-                              className={`index-job-fill ${indexState}`}
-                              style={{ width: `${indexPercent}%` }}
-                            />
-                          </div>
-                          <div className="index-job-meta">
-                            {indexRowsDone.toLocaleString()}/{indexRowsTotal.toLocaleString()} rows
-                          </div>
-                        </>
-                      ) : (
-                        <div className="index-job-ready">{indexLabel}</div>
-                      )}
+                      <div className="index-job-ready">{indexLabel}</div>
                     </div>
 
                     <button
@@ -887,7 +861,7 @@ export default function Upload() {
           {activeTableName && (
             <div className="preview-table-name" aria-live="polite">
               <span className="preview-table-name-label">Now viewing</span>
-              <span className="mono preview-table-name-value">{activeTableName}</span>
+              <span className="preview-table-name-value">{activeTableName}</span>
             </div>
           )}
         </div>
