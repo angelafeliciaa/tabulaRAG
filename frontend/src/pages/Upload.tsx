@@ -75,6 +75,7 @@ export default function Upload() {
   const [activeTableId, setActiveTableId] = useState<number | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [showScrollHint, setShowScrollHint] = useState(false);
+  const [showPreviewScrollHint, setShowPreviewScrollHint] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingName, setEditingName] = useState("");
   const [renameHintId, setRenameHintId] = useState<number | null>(null);
@@ -84,6 +85,7 @@ export default function Upload() {
     Record<number, TableIndexStatus>
   >({});
   const tablesScrollRef = useRef<HTMLDivElement | null>(null);
+  const previewAreaRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const estimateJobRef = useRef(0);
   const toastTimerRef = useRef<number | null>(null);
@@ -359,6 +361,31 @@ export default function Upload() {
     };
   }, [tables.length]);
 
+  useEffect(() => {
+    const container = previewAreaRef.current;
+    const element = container?.querySelector(".table-scroll") as HTMLDivElement | null;
+    if (!element) {
+      setShowPreviewScrollHint(false);
+      return;
+    }
+
+    const updateHint = () => {
+      const atBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 4;
+      const canScroll = element.scrollHeight > element.clientHeight + 2;
+      setShowPreviewScrollHint(canScroll && !atBottom);
+    };
+
+    const rafId = window.requestAnimationFrame(updateHint);
+    element.addEventListener("scroll", updateHint);
+    window.addEventListener("resize", updateHint);
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      element.removeEventListener("scroll", updateHint);
+      window.removeEventListener("resize", updateHint);
+    };
+  }, [preview?.dataset_id, preview?.rows.length, previewBusy, previewErr]);
+
   async function loadPreview(datasetId: number) {
     setActiveTableId(datasetId);
     setPreviewBusy(true);
@@ -629,6 +656,23 @@ export default function Upload() {
       ? tables.find((table) => table.dataset_id === activeTableId)?.name || "Table"
       : null;
 
+  function scrollUploadedTablesToBottom() {
+    const element = tablesScrollRef.current;
+    if (!element) {
+      return;
+    }
+    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+  }
+
+  function scrollPreviewToBottom() {
+    const container = previewAreaRef.current;
+    const element = container?.querySelector(".table-scroll") as HTMLDivElement | null;
+    if (!element) {
+      return;
+    }
+    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+  }
+
   return (
     <div className="page page-stack">
       {toast && (
@@ -851,7 +895,17 @@ export default function Upload() {
           </ul>
         </div>
 
-        {showScrollHint && <div className="scroll-indicator" aria-hidden="true">▼</div>}
+        {showScrollHint && (
+          <button
+            type="button"
+            className="scroll-indicator uploaded-scroll-indicator"
+            onClick={scrollUploadedTablesToBottom}
+            aria-label="Scroll uploaded tables to bottom"
+            title="Scroll to bottom"
+          >
+            ▼
+          </button>
+        )}
 
       </div>
 
@@ -860,8 +914,7 @@ export default function Upload() {
           <h3 style={{ marginBottom: 0 }}>Table preview</h3>
           {activeTableName && (
             <div className="preview-table-name" aria-live="polite">
-              <span className="preview-table-name-label">Now viewing</span>
-              <span className="preview-table-name-value">{activeTableName}</span>
+              <span className="preview-table-name-label">{activeTableName}</span>
             </div>
           )}
         </div>
@@ -870,9 +923,21 @@ export default function Upload() {
         {previewErr && <p className="error">{previewErr}</p>}
 
         {preview && (
-          <div className="table-area">
+          <div className="table-area" ref={previewAreaRef}>
             <DataTable columns={preview.columns} rows={preview.rows} />
           </div>
+        )}
+
+        {showPreviewScrollHint && (
+          <button
+            type="button"
+            className="scroll-indicator preview-scroll-indicator"
+            onClick={scrollPreviewToBottom}
+            aria-label="Scroll table preview to bottom"
+            title="Scroll to bottom"
+          >
+            ▼
+          </button>
         )}
 
         {!previewBusy && !preview && !previewErr && (

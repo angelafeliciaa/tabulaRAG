@@ -721,14 +721,6 @@ ul {
     margin: 0 0 12px 0;
 }
 
-li {
-    padding: 6px 10px;
-    border-radius: 10px;
-    border: 1px solid var(--border);
-    background: var(--bg-elev-2);
-    margin-bottom: 6px;
-}
-
 .tables-scroll {
     max-height: 144px;
     overflow: auto;
@@ -737,6 +729,17 @@ li {
 
 .tables-scroll ul {
     margin: 0;
+}
+
+.tables-scroll li {
+    padding: 0;
+    border: none;
+    background: transparent;
+    margin-bottom: 8px;
+}
+
+.tables-scroll li:last-child {
+    margin-bottom: 0;
 }
 
 .scroll-indicator {
@@ -755,6 +758,28 @@ li {
     color: var(--text-muted);
     font-size: 12px;
     box-shadow: 0 6px 12px rgba(23, 30, 44, 0.12);
+    cursor: pointer;
+    pointer-events: auto;
+    padding: 0;
+    z-index: 2;
+}
+
+.scroll-indicator:hover {
+    transform: translateX(-50%);
+    box-shadow: 0 6px 12px rgba(23, 30, 44, 0.16);
+    background: var(--bg-elev-2);
+}
+
+.scroll-indicator:focus {
+    transform: translateX(-50%);
+}
+
+.preview-scroll-indicator {
+    bottom: 22px;
+}
+
+.uploaded-scroll-indicator {
+    bottom: 12px;
 }
 
 .file-input-hidden {
@@ -773,6 +798,12 @@ li {
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 4px 8px;
+    transition: background 0.16s ease, border-color 0.16s ease;
+}
+
+.list-item:hover {
+    background: var(--bg-elev);
+    border-color: var(--border-soft);
 }
 
 .rename-input {
@@ -795,6 +826,7 @@ li {
 }
 
 .list-button {
+    display: block;
     width: 100%;
     text-align: left;
     border: none;
@@ -803,6 +835,13 @@ li {
     padding: 0;
     font: inherit;
     cursor: pointer;
+}
+
+.list-button:hover,
+.list-button:focus {
+    transform: none;
+    box-shadow: none;
+    background: transparent;
 }
 
 .index-job {

@@ -32,6 +32,26 @@ function getErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function parseRequestedHighlightIds(primaryId: string, search: string): string[] {
+  const params = new URLSearchParams(search);
+  const rawTargets = params.get("targets") || "";
+  const extraIds = rawTargets
+    .split(/[,\s|]+/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const id of [primaryId, ...extraIds]) {
+    if (seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    ordered.push(id);
+  }
+  return ordered;
+}
+
 export default function HighlightView() {
   const { highlightId } = useParams();
   const location = useLocation();
@@ -53,13 +73,44 @@ export default function HighlightView() {
 
     (async () => {
       setErr(null);
-      const h = await getHighlight(highlightId);
+      const requestedIds = parseRequestedHighlightIds(highlightId, location.search);
+      const highlights = await Promise.all(
+        requestedIds.map(async (id) => {
+          try {
+            return await getHighlight(id);
+          } catch {
+            return null;
+          }
+        }),
+      );
+      const validHighlights = highlights.filter(
+        (value): value is HighlightResponse => value !== null,
+      );
+
+      if (validHighlights.length === 0) {
+        throw new Error("Highlight not found.");
+      }
+
+      const h = validHighlights[0];
       if (cancelled) {
         return;
       }
 
       setHighlight(h);
-      setTargets([{ row: h.row_index, cols: h.column ? [h.column] : [] }]);
+      const sameDatasetHighlights = validHighlights.filter(
+        (value) => value.dataset_id === h.dataset_id,
+      );
+      const seenRows = new Set<number>();
+      const nextTargets: HighlightTarget[] = [];
+      for (const item of sameDatasetHighlights) {
+        if (seenRows.has(item.row_index)) {
+          continue;
+        }
+        seenRows.add(item.row_index);
+        nextTargets.push({ row: item.row_index, cols: item.column ? [item.column] : [] });
+      }
+      setTargets(nextTargets);
+      setTargetIndex(0);
 
       try {
         const tables = await listTables();
@@ -83,7 +134,7 @@ export default function HighlightView() {
     return () => {
       cancelled = true;
     };
-  }, [highlightId]);
+  }, [highlightId, location.search]);
 
   useEffect(() => {
     if (!highlight || targets.length === 0) {
