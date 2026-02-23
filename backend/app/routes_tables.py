@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from app.db import SessionLocal
 from app.index_jobs import clear_index_job, get_index_jobs
 from app.models import Dataset, DatasetColumn, DatasetRow
-from app.qdrant_client import delete_collection
+from app.qdrant_client import delete_collection, get_collection_point_count
 
 router = APIRouter()
 
@@ -80,6 +80,33 @@ def list_index_status(dataset_id: Optional[List[int]] = Query(default=None)):
             if int(item.get("total_rows", 0)) <= 0 and current_row_count > 0:
                 item["total_rows"] = current_row_count
             response.append(item)
+            continue
+
+        point_count: Optional[int] = None
+        try:
+            point_count = get_collection_point_count(current_dataset_id)
+        except Exception:
+            point_count = None
+
+        if (
+            point_count is not None
+            and current_row_count > 0
+            and int(point_count) < current_row_count
+        ):
+            progress = float(point_count) / float(current_row_count) * 100.0
+            response.append(
+                {
+                    "dataset_id": current_dataset_id,
+                    "state": "indexing",
+                    "progress": progress,
+                    "processed_rows": int(point_count),
+                    "total_rows": current_row_count,
+                    "message": "Indexing vectors...",
+                    "started_at": None,
+                    "updated_at": None,
+                    "finished_at": None,
+                }
+            )
             continue
 
         response.append(

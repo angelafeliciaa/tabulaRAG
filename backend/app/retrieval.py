@@ -105,9 +105,12 @@ def semantic_search(
 
     # Pass 1: filtered search (only if we have keywords)
     if keyword_filter is not None:
-        filtered_hits = search_vectors(
-            dataset_id, query_vector, limit=top_k, query_filter=keyword_filter
-        )
+        try:
+            filtered_hits = search_vectors(
+                dataset_id, query_vector, limit=top_k, query_filter=keyword_filter
+            )
+        except Exception:
+            filtered_hits = []
         for r in _hits_to_results(filtered_hits, dataset_id, question, "semantic"):
             seen_ids.add(r["row_index"])
             results.append(r)

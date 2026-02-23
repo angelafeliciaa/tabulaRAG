@@ -1,10 +1,11 @@
 import csv
 import io
+import json
 import os
 from typing import Iterable, List, Tuple
 import unicodedata
 import httpx
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import insert, text, select
 from contextlib import asynccontextmanager
@@ -17,14 +18,21 @@ from app.index_jobs import (
     update_index_job,
 )
 from app.indexing import index_dataset
+from app.index_worker import IndexWorker
 from app.models import Base, Dataset, DatasetColumn, DatasetRow
 from app.mcp_server import mcp
+from app.qdrant_client import get_collection_point_count
 from app.routes_tables import router as tables_router
 from app.routes_query import router as query_router
 
 
+_index_worker: IndexWorker | None = None
+INDEX_WORKER_CONCURRENCY = max(1, int(os.getenv("INDEX_WORKER_CONCURRENCY", "4")))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _index_worker
     Base.metadata.create_all(bind=engine)
     try:
         from app.embeddings import get_model
@@ -32,8 +40,19 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    _index_worker = IndexWorker(
+        _index_dataset_safe,
+        worker_count=INDEX_WORKER_CONCURRENCY,
+    )
+    _index_worker.start()
+    _resume_incomplete_index_jobs()
+
     async with mcp.session_manager.run():
-        yield
+        try:
+            yield
+        finally:
+            if _index_worker is not None:
+                _index_worker.stop()
 
 
 app = FastAPI(title="TabulaRAG API", lifespan=lifespan)
@@ -116,7 +135,7 @@ def _normalize_headers(headers: List[str]) -> List[str]:
 
 
 NULL_VALUES = {"null", "none", "na", "n/a", "nan", "-", ""}
-ROW_INSERT_BATCH_SIZE = int(os.getenv("ROW_INSERT_BATCH_SIZE", "5000"))
+ROW_INSERT_BATCH_SIZE = int(os.getenv("ROW_INSERT_BATCH_SIZE", "20000"))
 MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "100"))
 MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
@@ -191,6 +210,75 @@ def _iter_rows(
     return headers, rows_iter, detected_delimiter
 
 
+def _build_row_obj(headers: List[str], row: List[str]) -> dict:
+    return {
+        headers[i]: _normalize_value(row[i] if i < len(row) else None)
+        for i in range(len(headers))
+    }
+
+
+def _insert_rows_postgres_copy(
+    dataset_id: int,
+    headers: List[str],
+    rows_iter: Iterable[List[str]],
+) -> int:
+    """Fast path for PostgreSQL ingestion using COPY."""
+    row_count = 0
+    raw_connection = engine.raw_connection()
+    try:
+        with raw_connection.cursor() as cursor:
+            with cursor.copy(
+                "COPY dataset_rows (dataset_id, row_index, row_data) FROM STDIN"
+            ) as copy:
+                for row_index, row in enumerate(rows_iter):
+                    row_obj = _build_row_obj(headers, row)
+                    copy.write_row(
+                        (
+                            dataset_id,
+                            row_index,
+                            json.dumps(row_obj, ensure_ascii=False),
+                        )
+                    )
+                    row_count += 1
+        raw_connection.commit()
+        return row_count
+    except Exception:
+        raw_connection.rollback()
+        raise
+    finally:
+        raw_connection.close()
+
+
+def _insert_rows_batched(
+    dataset_id: int,
+    headers: List[str],
+    rows_iter: Iterable[List[str]],
+) -> int:
+    """Fallback ingestion path (works for SQLite and non-Postgres)."""
+    row_count = 0
+    with SessionLocal() as db:
+        batch_rows = []
+        for row_index, row in enumerate(rows_iter):
+            row_obj = _build_row_obj(headers, row)
+            batch_rows.append(
+                {
+                    "dataset_id": dataset_id,
+                    "row_index": row_index,
+                    "row_data": row_obj,
+                }
+            )
+            if len(batch_rows) >= ROW_INSERT_BATCH_SIZE:
+                db.execute(insert(DatasetRow), batch_rows)
+                row_count += len(batch_rows)
+                batch_rows.clear()
+
+        if batch_rows:
+            db.execute(insert(DatasetRow), batch_rows)
+            row_count += len(batch_rows)
+        db.commit()
+    return row_count
+
+
 def _index_dataset_safe(dataset_id: int, total_rows: int) -> None:
     start_index_job(dataset_id, total_rows)
 
@@ -200,15 +288,51 @@ def _index_dataset_safe(dataset_id: int, total_rows: int) -> None:
             progress_callback=lambda processed, total: update_index_job(
                 dataset_id, processed, total
             ),
+            expected_total_rows=total_rows,
         )
         mark_index_job_ready(dataset_id, total_rows)
     except Exception as exc:
         mark_index_job_error(dataset_id, total_rows, f"Indexing failed: {exc}")
 
 
+def _enqueue_index_job(dataset_id: int, total_rows: int) -> None:
+    if _index_worker is None:
+        _index_dataset_safe(dataset_id, total_rows)
+        return
+    _index_worker.enqueue(dataset_id, total_rows)
+
+
+def _resume_incomplete_index_jobs() -> None:
+    if _index_worker is None:
+        return
+
+    with SessionLocal() as db:
+        datasets = db.execute(
+            select(Dataset.id, Dataset.row_count)
+            .where(Dataset.row_count > 0)
+            .order_by(Dataset.id.asc())
+        ).all()
+
+    for dataset_id_raw, row_count_raw in datasets:
+        dataset_id = int(dataset_id_raw)
+        row_count = int(row_count_raw or 0)
+        if row_count <= 0:
+            continue
+
+        try:
+            point_count = get_collection_point_count(dataset_id)
+        except Exception:
+            point_count = None
+
+        if point_count is not None and int(point_count) >= row_count:
+            continue
+
+        queue_index_job(dataset_id, row_count)
+        _index_worker.enqueue(dataset_id, row_count)
+
+
 @app.post("/ingest")
 def ingest_table(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     dataset_name: str | None = Form(None),
     has_header: bool = Form(True),
@@ -248,31 +372,11 @@ def ingest_table(
         dataset_has_header = dataset.has_header
 
     row_count = 0
-    # Insert rows in batches for better throughput on large files.
     try:
-        with SessionLocal() as db:
-            batch_rows = []
-            for row_index, row in enumerate(rows_iter):
-                row_obj = {
-                    headers[i]: _normalize_value(row[i] if i < len(row) else None)
-                    for i in range(len(headers))
-                }
-                batch_rows.append(
-                    {
-                        "dataset_id": dataset_id,
-                        "row_index": row_index,
-                        "row_data": row_obj,
-                    }
-                )
-                if len(batch_rows) >= ROW_INSERT_BATCH_SIZE:
-                    db.execute(insert(DatasetRow), batch_rows)
-                    row_count += len(batch_rows)
-                    batch_rows.clear()
-
-            if batch_rows:
-                db.execute(insert(DatasetRow), batch_rows)
-                row_count += len(batch_rows)
-            db.commit()
+        if engine.dialect.name == "postgresql":
+            row_count = _insert_rows_postgres_copy(dataset_id, headers, rows_iter)
+        else:
+            row_count = _insert_rows_batched(dataset_id, headers, rows_iter)
     except Exception as exc:
         with SessionLocal() as db:
             db.execute(text("DELETE FROM datasets WHERE id = :id"), {"id": dataset_id})
@@ -289,7 +393,7 @@ def ingest_table(
 
     # Start vector indexing after response so uploads don't block on embedding/Qdrant upserts.
     queue_index_job(dataset_id, row_count)
-    background_tasks.add_task(_index_dataset_safe, dataset_id, row_count)
+    _enqueue_index_job(dataset_id, row_count)
 
     return {
         "dataset_id": dataset_id,
