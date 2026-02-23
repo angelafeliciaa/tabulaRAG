@@ -1,8 +1,16 @@
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
+
 from app.routes_tables import list_tables, get_table_slice
 from app.retrieval import get_highlight, hybrid_search
 
-mcp = FastMCP("TabulaRAG")
+mcp = FastMCP(
+    "TabulaRAG",
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=False
+    )
+)
+
 
 @mcp.tool()
 def ping() -> dict:
