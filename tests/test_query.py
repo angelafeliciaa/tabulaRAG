@@ -25,7 +25,7 @@ def test_query_dataset_not_found(client):
         json={"question": "Who lives in London?", "dataset_id": 9999},
     )
     assert resp.status_code == 404
-    assert "Dataset not found" in resp.json()["detail"]
+    assert "ingested tables" in resp.json()["detail"].lower()
 
 
 def test_query_missing_question(client):
@@ -45,6 +45,55 @@ def test_query_top_k_optional(client):
 
     assert resp.status_code == 200
     assert resp.json()["dataset_id"] == dataset_id
+
+
+def test_query_auto_resolves_dataset_from_question(client):
+    csv_content = b"Product,Boxes Shipped,Country\nDark,10,UK\n"
+    ingest_resp = client.post(
+        "/ingest",
+        files={"file": ("chocolate.csv", csv_content, "text/csv")},
+        data={"dataset_name": "Chocolate"},
+    )
+    dataset_id = ingest_resp.json()["dataset_id"]
+
+    with patch("app.retrieval.search_vectors", return_value=[]), \
+         patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
+        resp = client.post(
+            "/query",
+            json={"question": "From the Chocolate table, how many entries are there?"},
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["dataset_id"] == dataset_id
+    assert data["resolved_dataset"]["dataset_id"] == dataset_id
+    assert "resolved" in (data.get("resolution_note") or "").lower()
+
+
+def test_query_invalid_dataset_id_resolves_from_name_hint(client):
+    csv_content = b"Product,Boxes Shipped,Country\nDark,10,UK\n"
+    ingest_resp = client.post(
+        "/ingest",
+        files={"file": ("chocolate.csv", csv_content, "text/csv")},
+        data={"dataset_name": "Chocolate"},
+    )
+    dataset_id = ingest_resp.json()["dataset_id"]
+
+    with patch("app.retrieval.search_vectors", return_value=[]), \
+         patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
+        resp = client.post(
+            "/query",
+            json={
+                "dataset_id": dataset_id + 999,
+                "question": "From the Chocolate table, what product has the most boxes shipped?",
+            },
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["dataset_id"] == dataset_id
+    assert data["resolved_dataset"]["name"] == "Chocolate"
+    assert "not found" in (data.get("resolution_note") or "").lower()
 
 
 def test_query_semantic_results(client):

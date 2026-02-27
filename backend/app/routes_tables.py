@@ -58,7 +58,7 @@ def list_tables():
         ]
 
 
-@router.get("/tables/index-status")
+@router.get("/tables/index-status", include_in_schema=False)
 def list_index_status(dataset_id: Optional[List[int]] = Query(default=None)):
     with SessionLocal() as db:
         query = select(Dataset.id, Dataset.row_count)
@@ -126,7 +126,10 @@ def list_index_status(dataset_id: Optional[List[int]] = Query(default=None)):
     return response
 
 
-@router.get("/tables/{dataset_id}/slice")
+@router.get(
+    "/tables/{dataset_id}/slice",
+    include_in_schema=False,
+)
 def get_table_slice(
     dataset_id: int,
     offset: int = 0,
@@ -174,7 +177,7 @@ def get_table_slice(
         }
 
 
-@router.delete("/tables/{dataset_id}")
+@router.delete("/tables/{dataset_id}", include_in_schema=False)
 def delete_table(dataset_id: int, background_tasks: BackgroundTasks):
     with SessionLocal() as db:
         exists = db.execute(
@@ -192,7 +195,7 @@ def delete_table(dataset_id: int, background_tasks: BackgroundTasks):
     return {"deleted": dataset_id}
 
 
-@router.patch("/tables/{dataset_id}")
+@router.patch("/tables/{dataset_id}", include_in_schema=False)
 def rename_table(dataset_id: int, body: RenameRequest):
     with SessionLocal() as db:
         dataset = db.get(Dataset, dataset_id)

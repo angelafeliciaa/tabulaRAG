@@ -113,6 +113,131 @@ def _public_api_base_url() -> str:
     return base.rstrip("/")
 
 
+def _normalize_dataset_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+
+def _list_dataset_summaries() -> List[Dict[str, Any]]:
+    with SessionLocal() as db:
+        rows = db.execute(
+            text(
+                "SELECT id, name, source_filename, row_count, column_count, created_at "
+                "FROM datasets ORDER BY id DESC"
+            )
+        ).fetchall()
+
+    summaries: List[Dict[str, Any]] = []
+    for row in rows:
+        dataset_id = int(row[0])
+        created_at = row[5]
+        summaries.append(
+            {
+                "dataset_id": dataset_id,
+                "name": row[1],
+                "source_filename": row[2],
+                "row_count": int(row[3] or 0),
+                "column_count": int(row[4] or 0),
+                "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
+                "source_url": f"{_public_api_base_url()}/tables/{dataset_id}/slice?offset=0&limit=30",
+            }
+        )
+    return summaries
+
+
+def _score_dataset_match(
+    summary: Dict[str, Any],
+    dataset_name: str,
+    question: str,
+) -> float:
+    score = 0.0
+    normalized_name = _normalize_dataset_name(str(summary.get("name") or ""))
+    source_filename = str(summary.get("source_filename") or "")
+    normalized_file = _normalize_dataset_name(source_filename.rsplit(".", 1)[0])
+    normalized_dataset_name = _normalize_dataset_name(dataset_name)
+    normalized_question = _normalize_dataset_name(question)
+
+    if normalized_dataset_name:
+        if normalized_dataset_name == normalized_name:
+            score += 300.0
+        elif normalized_dataset_name == normalized_file:
+            score += 280.0
+        elif normalized_dataset_name in normalized_name:
+            score += 210.0
+        elif normalized_dataset_name in normalized_file:
+            score += 190.0
+
+    if normalized_question:
+        if normalized_name and normalized_name in normalized_question:
+            score += 120.0
+        if normalized_file and normalized_file in normalized_question:
+            score += 100.0
+
+    score += float(summary.get("row_count") or 0) * 0.01
+    score += float(summary.get("dataset_id") or 0) * 0.001
+    return score
+
+
+def resolve_dataset_context(
+    dataset_id: Optional[int],
+    dataset_name: Optional[str],
+    question: str,
+) -> Tuple[int, Dict[str, Any], Optional[str]]:
+    summaries = _list_dataset_summaries()
+    if not summaries:
+        raise ValueError("No ingested tables found. Upload a CSV/TSV first.")
+
+    by_id = {int(item["dataset_id"]): item for item in summaries}
+    if dataset_id is not None:
+        wanted_id = int(dataset_id)
+        if wanted_id in by_id:
+            return wanted_id, by_id[wanted_id], None
+
+    ranked = sorted(
+        summaries,
+        key=lambda item: _score_dataset_match(item, dataset_name or "", question),
+        reverse=True,
+    )
+    best = ranked[0]
+    best_id = int(best["dataset_id"])
+    best_score = _score_dataset_match(best, dataset_name or "", question)
+
+    normalized_dataset_name = _normalize_dataset_name(dataset_name or "")
+    question_norm = _normalize_dataset_name(question)
+    has_hint = bool(normalized_dataset_name)
+    if not has_hint:
+        for item in summaries:
+            name_norm = _normalize_dataset_name(str(item.get("name") or ""))
+            file_norm = _normalize_dataset_name(str(item.get("source_filename") or "").rsplit(".", 1)[0])
+            if (name_norm and name_norm in question_norm) or (file_norm and file_norm in question_norm):
+                has_hint = True
+                break
+
+    if dataset_id is None and len(summaries) > 1 and not has_hint:
+        raise ValueError(
+            "Multiple datasets are available. Provide dataset_id, or mention the dataset name in the question."
+        )
+
+    if dataset_id is not None and not has_hint and best_score < 50.0:
+        raise ValueError(
+            f"Dataset ID {dataset_id} was not found. Call GET /tables and use a valid dataset_id."
+        )
+
+    if dataset_id is not None:
+        note = (
+            f"Dataset ID {dataset_id} was not found; resolved to dataset_id={best_id} "
+            f"({best.get('name')})."
+        )
+    elif normalized_dataset_name:
+        note = (
+            f"Resolved dataset_name '{dataset_name}' to dataset_id={best_id} "
+            f"({best.get('name')})."
+        )
+    else:
+        note = f"Resolved dataset_id={best_id} ({best.get('name')})."
+
+    return best_id, best, note
+
+
 def _row_source_url(dataset_id: int, row_index: int) -> str:
     return (
         f"{_public_api_base_url()}/tables/{dataset_id}/slice"

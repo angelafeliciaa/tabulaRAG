@@ -2,10 +2,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import text
 
-from app.db import SessionLocal
-from app.retrieval import get_highlight, smart_query
+from app.retrieval import get_highlight, resolve_dataset_context, smart_query
 
 router = APIRouter()
 
@@ -14,7 +12,14 @@ router = APIRouter()
 
 class QueryRequest(BaseModel):
     question: str = Field(description="Natural language question to search the dataset with")
-    dataset_id: int = Field(description="ID of the dataset to query. Call GET /tables first to discover valid IDs.")
+    dataset_id: Optional[int] = Field(
+        default=None,
+        description="Optional dataset ID. If omitted (or invalid), the backend resolves from dataset_name/question.",
+    )
+    dataset_name: Optional[str] = Field(
+        default=None,
+        description="Optional dataset name (for example 'Chocolate'). Helps automatic dataset resolution.",
+    )
     top_k: int = Field(default=10, ge=1, le=100)
     filters: Optional[Dict[str, str]] = None
 
@@ -46,6 +51,8 @@ class QueryResponse(BaseModel):
     answer_details: Optional[Dict[str, Any]] = None
     dataset_url: Optional[str] = None
     final_response: Optional[str] = None
+    resolved_dataset: Optional[Dict[str, Any]] = None
+    resolution_note: Optional[str] = None
 
 class HighlightResponse(BaseModel):
     highlight_id: str
@@ -58,23 +65,31 @@ class HighlightResponse(BaseModel):
 
 # ── Endpoints ──────────────────────────────────────────────────────
 
-@router.post("/query", response_model=QueryResponse)
+@router.post(
+    "/query",
+    response_model=QueryResponse,
+    summary="Answer natural-language table queries",
+    description="Primary analytics endpoint. Use this instead of row-slice tools for sums/counts/top-N and precise citations.",
+)
 def query_dataset(body: QueryRequest):
-    # Verify dataset exists
-    with SessionLocal() as db:
-        row = db.execute(
-            text("SELECT id FROM datasets WHERE id = :id"),
-            {"id": body.dataset_id},
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Dataset not found.")
+    try:
+        resolved_dataset_id, resolved_dataset, resolution_note = resolve_dataset_context(
+            dataset_id=body.dataset_id,
+            dataset_name=body.dataset_name,
+            question=body.question,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
     payload = smart_query(
-        dataset_id=body.dataset_id,
+        dataset_id=resolved_dataset_id,
         question=body.question,
         filters=body.filters,
         top_k=body.top_k,
     )
+    payload["resolved_dataset"] = resolved_dataset
+    if resolution_note:
+        payload["resolution_note"] = resolution_note
     return QueryResponse(**payload)
 
 
