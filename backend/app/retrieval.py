@@ -64,6 +64,13 @@ _METRIC_KEYWORD_TOKENS: Set[str] = {
 _SINGLE_ROW_HINT_RE = re.compile(
     r"\b(one|single)\s+(deal|transaction|row|entry|order|sale|shipment)\b"
 )
+_SINGLE_DAY_HINT_RE = re.compile(r"\b(?:in|on)\s+(?:a|an|one)\s+day\b")
+_DAY_GROUPING_HINT_RE = re.compile(
+    r"\b(?:by|per|each)\s+day\b|\b(?:what|which)\s+day\b|\bdate\s+with\b"
+)
+_EXPLICIT_AGGREGATE_HINT_RE = re.compile(
+    r"\b(total|sum|average|avg|mean|combined|overall|all)\b"
+)
 _QUESTION_ROLE_COLUMN_KEYWORDS: Dict[str, Set[str]] = {
     "person": {
         "sale",
@@ -925,7 +932,14 @@ def _looks_like_single_row_rank_query(question: str) -> bool:
     lowered = question.lower()
     if _SINGLE_ROW_HINT_RE.search(lowered):
         return True
-    return bool(re.search(r"\bin\s+one\s+(deal|transaction|row|entry|order|sale|shipment)\b", lowered))
+    if re.search(r"\bin\s+one\s+(deal|transaction|row|entry|order|sale|shipment)\b", lowered):
+        return True
+
+    # "in a day" is commonly intended as a single daily record, not grouped totals.
+    if _SINGLE_DAY_HINT_RE.search(lowered):
+        if not _DAY_GROUPING_HINT_RE.search(lowered) and not _EXPLICIT_AGGREGATE_HINT_RE.search(lowered):
+            return True
+    return False
 
 
 def _extract_group_hint(question: str) -> Optional[str]:
@@ -1341,7 +1355,7 @@ def _infer_aggregate_answer(
 
         if answer_column and answer_value:
             answer = (
-                f"The {direction} {metric_for_mode} in one deal is {_format_number(metric_value)} "
+                f"The {direction} {metric_for_mode} in a single row is {_format_number(metric_value)} "
                 f"by {answer_column} {answer_value} (row {source_row_index})."
             )
         else:

@@ -257,6 +257,39 @@ def test_query_rank_single_row_returns_name_for_who_question(client):
     assert data["verification"]["status"] == "pass"
 
 
+def test_query_highest_amount_in_a_day_prefers_single_row_not_grouped_total(client):
+    csv_content = (
+        b"Date,Sales Person,Amount\n"
+        b"2024-06-30,Alice,$210.00\n"
+        b"2024-06-30,Bob,$220.00\n"
+        b"2024-06-29,Carla,$300.00\n"
+    )
+    resp = client.post(
+        "/ingest",
+        files={"file": ("day_amounts.csv", csv_content, "text/csv")},
+    )
+    dataset_id = resp.json()["dataset_id"]
+
+    with patch("app.retrieval.search_vectors", return_value=[]), \
+         patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
+        resp = client.post(
+            "/query",
+            json={
+                "question": "What is the highest sales amount made in a day?",
+                "dataset_id": dataset_id,
+            },
+        )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["answer_type"] == "aggregate"
+    assert data["answer_details"]["operation"] == "rank"
+    assert round(float(data["answer_details"]["metric_value"]), 3) == 300.0
+    assert data["answer_details"]["source_row_data"]["Date"] == "2024-06-29"
+    assert data["answer_details"]["source_row_data"]["Amount"] == "$300.00"
+    assert "group_by_column" not in data["answer_details"]
+
+
 def test_query_fail_closed_when_verification_fails(client, monkeypatch):
     dataset_id = _ingest(client)
     monkeypatch.setenv("QUERY_ENABLE_VERIFICATION", "true")
