@@ -22,6 +22,8 @@ const DELETE_UNDO_WINDOW_MS = 5600;
 const SUCCESS_TOAST_MS = 2800;
 const MAX_UPLOAD_SIZE_MB = 100;
 const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
+const INDEX_PROGRESS_DRIFT_STEP = 0.35;
+const INDEX_PROGRESS_DRIFT_CAP = 99.4;
 
 type ToastState =
   | { kind: "success"; message: string }
@@ -62,6 +64,51 @@ function getErrorMessage(error: unknown): string {
 
 function isTableNotFoundError(error: unknown): boolean {
   return /table not found/i.test(getErrorMessage(error));
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function smoothIndexStatus(
+  previous: TableIndexStatus | undefined,
+  incoming: TableIndexStatus,
+  fallbackTotalRows: number,
+): TableIndexStatus {
+  const totalRows =
+    incoming.total_rows > 0 ? incoming.total_rows : Math.max(0, fallbackTotalRows);
+
+  if (incoming.state !== "indexing" || !previous || previous.state !== "indexing") {
+    return { ...incoming, total_rows: totalRows };
+  }
+
+  const previousProgress = clamp(previous.progress || 0, 0, INDEX_PROGRESS_DRIFT_CAP);
+  const serverProgress = clamp(incoming.progress || 0, 0, INDEX_PROGRESS_DRIFT_CAP);
+
+  if (serverProgress > previousProgress + 0.05) {
+    return { ...incoming, total_rows: totalRows };
+  }
+
+  const nextProgress = Math.max(
+    serverProgress,
+    clamp(previousProgress + INDEX_PROGRESS_DRIFT_STEP, 0, INDEX_PROGRESS_DRIFT_CAP),
+  );
+
+  let nextProcessedRows = Math.max(0, incoming.processed_rows || 0);
+  if (totalRows > 0) {
+    const inferredRows = Math.min(
+      totalRows - 1,
+      Math.floor((nextProgress / 100) * totalRows),
+    );
+    nextProcessedRows = Math.max(nextProcessedRows, inferredRows);
+  }
+
+  return {
+    ...incoming,
+    total_rows: totalRows,
+    progress: nextProgress,
+    processed_rows: nextProcessedRows,
+  };
 }
 
 export default function Upload() {
@@ -206,7 +253,17 @@ export default function Upload() {
       }
     }
 
-    setIndexStatusByTable(nextStatusByTable);
+    setIndexStatusByTable((previous) => {
+      const merged: Record<number, TableIndexStatus> = {};
+      for (const table of nextTables) {
+        merged[table.dataset_id] = smoothIndexStatus(
+          previous[table.dataset_id],
+          nextStatusByTable[table.dataset_id],
+          table.row_count,
+        );
+      }
+      return merged;
+    });
   }, []);
 
   const refresh = useCallback(async () => {

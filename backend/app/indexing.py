@@ -1,4 +1,5 @@
 import json
+import math
 import os
 from typing import Any, Callable, Dict, List, Optional
 
@@ -15,6 +16,18 @@ from app.qdrant_client import (
 )
 
 EMBED_BATCH_SIZE = max(64, int(os.getenv("INDEX_EMBED_BATCH_SIZE", "768")))
+INDEX_EMBED_MIN_BATCH_SIZE = max(16, int(os.getenv("INDEX_EMBED_MIN_BATCH_SIZE", "64")))
+INDEX_PROGRESS_TARGET_UPDATES = max(
+    4, int(os.getenv("INDEX_PROGRESS_TARGET_UPDATES", "12"))
+)
+
+
+def _effective_embed_batch_size(total_rows: int) -> int:
+    """Choose a batch size that keeps indexing throughput high while reporting progress steadily."""
+    if total_rows <= 0:
+        return EMBED_BATCH_SIZE
+    target = int(math.ceil(total_rows / INDEX_PROGRESS_TARGET_UPDATES))
+    return max(INDEX_EMBED_MIN_BATCH_SIZE, min(EMBED_BATCH_SIZE, target))
 
 
 def _deserialize_row_data(raw: Any) -> Dict[str, Any]:
@@ -53,6 +66,8 @@ def index_dataset(
                 ).scalar()
                 or 0
             )
+
+    effective_embed_batch_size = _effective_embed_batch_size(total_rows)
 
     processed_rows = 0
     if progress_callback:
@@ -107,7 +122,7 @@ def index_dataset(
             batch_texts.append(serialized)
             batch_row_datas.append(row_data)
 
-            if len(batch_texts) >= EMBED_BATCH_SIZE:
+            if len(batch_texts) >= effective_embed_batch_size:
                 flush_batch()
 
     flush_batch()

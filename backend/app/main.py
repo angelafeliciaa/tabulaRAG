@@ -1,6 +1,7 @@
 import csv
 import io
 import json
+import logging
 import os
 from typing import Iterable, List, Tuple
 import unicodedata
@@ -26,6 +27,7 @@ from app.routes_tables import router as tables_router
 from app.routes_query import router as query_router
 
 
+logger = logging.getLogger(__name__)
 _index_worker: IndexWorker | None = None
 INDEX_WORKER_CONCURRENCY = max(1, int(os.getenv("INDEX_WORKER_CONCURRENCY", "4")))
 
@@ -292,6 +294,7 @@ def _index_dataset_safe(dataset_id: int, total_rows: int) -> None:
         )
         mark_index_job_ready(dataset_id, total_rows)
     except Exception as exc:
+        logger.exception("Indexing failed for dataset_id=%s", dataset_id)
         mark_index_job_error(dataset_id, total_rows, f"Indexing failed: {exc}")
 
 

@@ -16,6 +16,7 @@ def _env_bool(name: str, default: str) -> bool:
 
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
+QDRANT_TIMEOUT_SECONDS = float(os.getenv("QDRANT_TIMEOUT_SECONDS", "60"))
 QDRANT_UPSERT_BATCH_SIZE = max(64, int(os.getenv("QDRANT_UPSERT_BATCH_SIZE", "768")))
 QDRANT_UPSERT_PARALLEL = max(1, int(os.getenv("QDRANT_UPSERT_PARALLEL", "2")))
 QDRANT_UPSERT_WAIT = _env_bool("QDRANT_UPSERT_WAIT", "false")
@@ -31,7 +32,11 @@ def get_client() -> QdrantClient:
     global _client
     if _client is None:
         # Disable strict version checks so minor version skew doesn't slow startup/log spam.
-        _client = QdrantClient(url=QDRANT_URL, check_compatibility=False)
+        _client = QdrantClient(
+            url=QDRANT_URL,
+            check_compatibility=False,
+            timeout=QDRANT_TIMEOUT_SECONDS,
+        )
     return _client
 
 
