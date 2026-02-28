@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   deleteTable,
   getSlice,
@@ -36,8 +37,6 @@ type PendingDelete = {
   previousPreview: TableSlice | null;
   timeoutId: number;
 };
-
-type TableSortMode = "alphabet" | "rows" | "recent";
 
 function getErrorMessage(error: unknown): string {
   const normalize = (message: string): string => {
@@ -132,8 +131,6 @@ export default function Upload() {
   const [editingName, setEditingName] = useState("");
   const [renameHintId, setRenameHintId] = useState<number | null>(null);
   const [tableSearchQuery, setTableSearchQuery] = useState("");
-  const [tableSortMode, setTableSortMode] = useState<TableSortMode>("recent");
-  const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const [reloadNotice, setReloadNotice] = useState<string | null>(null);
   const [deletingTableIds, setDeletingTableIds] = useState<Record<number, boolean>>({});
   const [isDragActive, setIsDragActive] = useState(false);
@@ -161,7 +158,6 @@ export default function Upload() {
   const previewAreaRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
-  const sortMenuRef = useRef<HTMLDivElement | null>(null);
   const estimateJobRef = useRef(0);
   const toastTimerRef = useRef<number | null>(null);
   const pendingDeleteRef = useRef<PendingDelete | null>(null);
@@ -415,32 +411,6 @@ export default function Upload() {
       window.cancelAnimationFrame(rafId);
     };
   }, [editingId, busy]);
-
-  useEffect(() => {
-    if (!sortMenuOpen) {
-      return;
-    }
-
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (sortMenuRef.current && !sortMenuRef.current.contains(target)) {
-        setSortMenuOpen(false);
-      }
-    };
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSortMenuOpen(false);
-      }
-    };
-
-    document.addEventListener("mousedown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [sortMenuOpen]);
 
   useEffect(() => {
     return () => {
@@ -856,20 +826,7 @@ export default function Upload() {
       : null;
   const pinnedTableIdSet = useMemo(() => new Set(pinnedTableIds), [pinnedTableIds]);
   const sortedTables = useMemo(() => {
-    const sortByMode = (a: TableSummary, b: TableSummary): number => {
-      if (tableSortMode === "alphabet") {
-        const byName = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
-        if (byName !== 0) {
-          return byName;
-        }
-      } else if (tableSortMode === "rows") {
-        const byRows = b.row_count - a.row_count;
-        if (byRows !== 0) {
-          return byRows;
-        }
-      }
-
-      // Default/fallback ordering is most recent first.
+    const sortByRecency = (a: TableSummary, b: TableSummary): number => {
       const aTime = Number.isFinite(Date.parse(a.created_at))
         ? Date.parse(a.created_at)
         : a.dataset_id;
@@ -886,10 +843,10 @@ export default function Upload() {
       if (aPinned !== bPinned) {
         return aPinned ? -1 : 1;
       }
-      return sortByMode(a, b);
+      return sortByRecency(a, b);
     });
     return next;
-  }, [tables, pinnedTableIdSet, tableSortMode]);
+  }, [tables, pinnedTableIdSet]);
   const normalizedTableSearchQuery = tableSearchQuery.trim().toLowerCase();
   const filteredTables = useMemo(() => {
     if (!normalizedTableSearchQuery) {
@@ -1051,56 +1008,6 @@ export default function Upload() {
                 aria-label="Search table name"
               />
             </label>
-            <div className="sort-menu-wrap" ref={sortMenuRef}>
-              <button
-                type="button"
-                className={`sort-toggle-button ${sortMenuOpen ? "active" : ""}`}
-                onClick={() => setSortMenuOpen((current) => !current)}
-                aria-haspopup="dialog"
-                aria-expanded={sortMenuOpen}
-                aria-label="Sort tables"
-                title="Sort tables"
-              >
-                <svg viewBox="0 0 24 24" role="presentation" className="sort-toggle-icon">
-                  <path d="M8.7 3.3a1 1 0 0 1 1.4 0l3 3a1 1 0 1 1-1.4 1.4L10.4 6.4V20a1 1 0 1 1-2 0V6.4L7.1 7.7a1 1 0 1 1-1.4-1.4l3-3zm6.6 17.4a1 1 0 0 1-1.4 0l-3-3a1 1 0 0 1 1.4-1.4l1.3 1.3V4a1 1 0 1 1 2 0v13.6l1.3-1.3a1 1 0 1 1 1.4 1.4l-3 3z" />
-                </svg>
-                <span className="sort-toggle-text">Sort</span>
-              </button>
-              {sortMenuOpen && (
-                <div className="sort-menu" role="dialog" aria-label="Sort options">
-                  <button
-                    type="button"
-                    className={`sort-menu-item ${tableSortMode === "recent" ? "active" : ""}`}
-                    onClick={() => {
-                      setTableSortMode("recent");
-                      setSortMenuOpen(false);
-                    }}
-                  >
-                    Most recent
-                  </button>
-                  <button
-                    type="button"
-                    className={`sort-menu-item ${tableSortMode === "rows" ? "active" : ""}`}
-                    onClick={() => {
-                      setTableSortMode("rows");
-                      setSortMenuOpen(false);
-                    }}
-                  >
-                    Most rows
-                  </button>
-                  <button
-                    type="button"
-                    className={`sort-menu-item ${tableSortMode === "alphabet" ? "active" : ""}`}
-                    onClick={() => {
-                      setTableSortMode("alphabet");
-                      setSortMenuOpen(false);
-                    }}
-                  >
-                    Alphabet
-                  </button>
-                </div>
-              )}
-            </div>
           </div>
         </div>
 
@@ -1274,11 +1181,18 @@ export default function Upload() {
       <div className="panel upload-preview">
         <div className="preview-header">
           <h3 style={{ marginBottom: 0 }}>Table preview</h3>
-          {activeTableName && (
-            <div className="preview-table-name" aria-live="polite">
-              <span className="preview-table-name-label">{activeTableName}</span>
-            </div>
-          )}
+          <div className="preview-header-actions">
+            {activeTableName && (
+              <div className="preview-table-name" aria-live="polite">
+                <span className="preview-table-name-label">{activeTableName}</span>
+              </div>
+            )}
+            {activeTableId !== null && (
+              <Link className="glass preview-open-full-link" to={`/tables/${activeTableId}`}>
+                Open Full Table
+              </Link>
+            )}
+          </div>
         </div>
 
         {previewBusy && <p className="small">Loading preview...</p>}
@@ -1286,7 +1200,7 @@ export default function Upload() {
 
         {preview && (
           <div className="table-area" ref={previewAreaRef}>
-            <DataTable columns={preview.columns} rows={preview.rows} />
+            <DataTable columns={preview.columns} rows={preview.rows} sortable={false} />
           </div>
         )}
 
