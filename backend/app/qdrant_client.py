@@ -184,9 +184,11 @@ def search_vectors(
     )
     results = []
     for hit in hits.points:
-        results.append({
-            "id": hit.id,
-            "score": hit.score,
-            "payload": hit.payload,
-        })
+        results.append(
+            {
+                "id": hit.id,
+                "score": hit.score,
+                "payload": hit.payload,
+            }
+        )
     return results

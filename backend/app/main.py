@@ -20,8 +20,8 @@ from app.index_jobs import (
 from app.indexing import index_dataset
 from app.index_worker import IndexWorker
 from app.models import Base, Dataset, DatasetColumn, DatasetRow
-from app.mcp_server import mcp
 from app.qdrant_client import get_collection_point_count
+from fastapi_mcp import FastApiMCP
 from app.routes_tables import router as tables_router
 from app.routes_query import router as query_router
 from app.typed_values import normalize_row_obj
@@ -49,12 +49,7 @@ async def lifespan(app: FastAPI):
     _index_worker.start()
     _resume_incomplete_index_jobs()
 
-    async with mcp.session_manager.run():
-        try:
-            yield
-        finally:
-            if _index_worker is not None:
-                _index_worker.stop()
+    yield
 
 
 app = FastAPI(title="TabulaRAG API", lifespan=lifespan)
@@ -70,15 +65,14 @@ app.add_middleware(
 
 app.include_router(tables_router)
 app.include_router(query_router)
-app.mount("/mcp", mcp.streamable_http_app())
 
 
-@app.get("/health")
+@app.get("/health", include_in_schema=False)
 def health():
     return {"status": "ok"}
 
 
-@app.get("/health/deps")
+@app.get("/health/deps", include_in_schema=False)
 def health_deps():
     postgres_ok = False
     qdrant_ok = False
@@ -103,11 +97,6 @@ def health_deps():
         "postgres": "ok" if postgres_ok else "down",
         "qdrant": "ok" if qdrant_ok else "down",
     }
-
-
-@app.get("/mcp-status")
-def mcp_status():
-    return {"status": "ok", "endpoint": "/mcp"}
 
 
 # checks if file is a csv or tsv based on file extension, raises HTTPException if not
@@ -319,7 +308,7 @@ def _resume_incomplete_index_jobs() -> None:
         _index_worker.enqueue(dataset_id, row_count)
 
 
-@app.post("/ingest")
+@app.post("/ingest", include_in_schema=False)
 def ingest_table(
     file: UploadFile = File(...),
     dataset_name: str | None = Form(None),
@@ -391,3 +380,11 @@ def ingest_table(
         "delimiter": dataset_delimiter,
         "has_header": dataset_has_header,
     }
+
+
+
+mcp = FastApiMCP(
+    app,
+    name="TabulaRAG",
+)
+mcp.mount_http()

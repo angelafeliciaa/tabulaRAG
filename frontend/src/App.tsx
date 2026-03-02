@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { Route, Routes } from "react-router-dom";
-import { getMcpStatus, type ServerStatus } from "./api";
+import { getServerStatus, type ServerStatus } from "./api";
 import moonIcon from "./images/moon.png";
 import sunIcon from "./images/sun.png";
 import HighlightView from "./pages/HighlightView";
 import TableView from "./pages/TableView";
 import Upload from "./pages/Upload";
+import AggregateTableView from "./pages/AggregateTable";
 
 export default function App() {
   const [theme, setTheme] = useState<"dark" | "light">(() => {
@@ -15,7 +16,7 @@ export default function App() {
     }
     return "light";
   });
-  const [mcpStatus, setMcpStatus] = useState<ServerStatus>("unknown");
+  const [serverStatus, setServerStatus] = useState<ServerStatus>("Unknown");
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -26,9 +27,9 @@ export default function App() {
     let mounted = true;
 
     async function checkStatus() {
-      const result = await getMcpStatus();
+      const result = await getServerStatus();
       if (mounted) {
-        setMcpStatus(result.status);
+        setServerStatus(result.status);
       }
     }
 
@@ -43,11 +44,9 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <div className={`mcp-status ${mcpStatus}`}>
+      <div className={`server-status ${serverStatus}`}>
         <span className="status-dot" />
-        <span>
-          MCP Server: {mcpStatus === "online" ? "Online" : mcpStatus === "offline" ? "Offline" : "Unknown"}
-        </span>
+        <span>Server Connection: {serverStatus}</span>
       </div>
 
       <div className="theme-toggle-wrap">
@@ -64,12 +63,15 @@ export default function App() {
             </span>
           </span>
         </button>
-        <div className="toggle-label">{theme === "dark" ? "Dark mode" : "Light mode"}</div>
+        <div className="toggle-label">
+          {theme === "dark" ? "Dark mode" : "Light mode"}
+        </div>
       </div>
 
       <div className="content">
         <Routes>
           <Route path="/" element={<Upload />} />
+          <Route path="/tables/virtual" element={<AggregateTableView />} />
           <Route path="/tables/:datasetId" element={<TableView />} />
           <Route path="/highlight/:highlightId" element={<HighlightView />} />
         </Routes>

@@ -21,22 +21,143 @@ from app.typed_values import (
 
 # Common English stop words to exclude from keyword filters
 _STOP_WORDS: Set[str] = {
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "shall", "can", "need", "dare", "ought",
-    "used", "to", "of", "in", "for", "on", "with", "at", "by", "from",
-    "as", "into", "through", "during", "before", "after", "above", "below",
-    "between", "out", "off", "over", "under", "again", "further", "then",
-    "once", "here", "there", "when", "where", "why", "how", "all", "each",
-    "every", "both", "few", "more", "most", "other", "some", "such", "no",
-    "nor", "not", "only", "own", "same", "so", "than", "too", "very",
-    "just", "because", "but", "and", "or", "if", "while", "about",
-    "what", "which", "who", "whom", "this", "that", "these", "those",
-    "am", "it", "its", "i", "me", "my", "myself", "we", "our", "ours",
-    "you", "your", "yours", "he", "him", "his", "she", "her", "hers",
-    "they", "them", "their", "theirs", "tell", "show", "find", "get",
-    "give", "know", "think", "say", "make", "go", "see", "come", "take",
-    "want", "look", "use", "many", "much",
+    "a",
+    "an",
+    "the",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "may",
+    "might",
+    "shall",
+    "can",
+    "need",
+    "dare",
+    "ought",
+    "used",
+    "to",
+    "of",
+    "in",
+    "for",
+    "on",
+    "with",
+    "at",
+    "by",
+    "from",
+    "as",
+    "into",
+    "through",
+    "during",
+    "before",
+    "after",
+    "above",
+    "below",
+    "between",
+    "out",
+    "off",
+    "over",
+    "under",
+    "again",
+    "further",
+    "then",
+    "once",
+    "here",
+    "there",
+    "when",
+    "where",
+    "why",
+    "how",
+    "all",
+    "each",
+    "every",
+    "both",
+    "few",
+    "more",
+    "most",
+    "other",
+    "some",
+    "such",
+    "no",
+    "nor",
+    "not",
+    "only",
+    "own",
+    "same",
+    "so",
+    "than",
+    "too",
+    "very",
+    "just",
+    "because",
+    "but",
+    "and",
+    "or",
+    "if",
+    "while",
+    "about",
+    "what",
+    "which",
+    "who",
+    "whom",
+    "this",
+    "that",
+    "these",
+    "those",
+    "am",
+    "it",
+    "its",
+    "i",
+    "me",
+    "my",
+    "myself",
+    "we",
+    "our",
+    "ours",
+    "you",
+    "your",
+    "yours",
+    "he",
+    "him",
+    "his",
+    "she",
+    "her",
+    "hers",
+    "they",
+    "them",
+    "their",
+    "theirs",
+    "tell",
+    "show",
+    "find",
+    "get",
+    "give",
+    "know",
+    "think",
+    "say",
+    "make",
+    "go",
+    "see",
+    "come",
+    "take",
+    "want",
+    "look",
+    "use",
+    "many",
+    "much",
 }
 
 _SUPERLATIVE_MAX_TOKENS: Set[str] = {"most", "highest", "max", "maximum", "largest", "top"}
@@ -95,6 +216,7 @@ _QUESTION_ROLE_COLUMN_KEYWORDS: Dict[str, Set[str]] = {
     "location": {"country", "region", "market", "city", "state", "location"},
     "date": {"date", "day", "month", "year", "time"},
 }
+_NUMBER_CLEAN_RE = re.compile(r"[$€£¥₹]")
 _DIGIT_ONLY_RE = re.compile(r"^[0-9./\\-]+$")
 
 
@@ -202,7 +324,11 @@ def _list_dataset_summaries() -> List[Dict[str, Any]]:
                 "source_filename": row[2],
                 "row_count": int(row[3] or 0),
                 "column_count": int(row[4] or 0),
-                "created_at": created_at.isoformat() if hasattr(created_at, "isoformat") else str(created_at),
+                "created_at": (
+                    created_at.isoformat()
+                    if hasattr(created_at, "isoformat")
+                    else str(created_at)
+                ),
                 "source_url": _table_ui_url(dataset_id),
             }
         )
@@ -272,8 +398,12 @@ def resolve_dataset_context(
     if not has_hint:
         for item in summaries:
             name_norm = _normalize_dataset_name(str(item.get("name") or ""))
-            file_norm = _normalize_dataset_name(str(item.get("source_filename") or "").rsplit(".", 1)[0])
-            if (name_norm and name_norm in question_norm) or (file_norm and file_norm in question_norm):
+            file_norm = _normalize_dataset_name(
+                str(item.get("source_filename") or "").rsplit(".", 1)[0]
+            )
+            if (name_norm and name_norm in question_norm) or (
+                file_norm and file_norm in question_norm
+            ):
                 has_hint = True
                 break
 
@@ -744,14 +874,18 @@ def _sql_equivalent_query(
 
     if mode == "sum":
         return (
-            "SELECT SUM(" + metric_expr + ") AS metric_value "
+            "SELECT SUM("
+            + metric_expr
+            + ") AS metric_value "
             + "FROM dataset_rows WHERE "
             + where_sql
             + ";"
         )
     if mode == "avg":
         return (
-            "SELECT AVG(" + metric_expr + ") AS metric_value "
+            "SELECT AVG("
+            + metric_expr
+            + ") AS metric_value "
             + "FROM dataset_rows WHERE "
             + where_sql
             + ";"
@@ -803,6 +937,51 @@ def _detect_analytic_mode(
 
 def _parse_number(value: Any) -> Optional[float]:
     return _typed_parse_number(value)
+# Commented out on merge conflict just in case it's actually needed
+#     if value is None:
+#         return None
+#     if isinstance(value, bool):
+#         return None
+#     if isinstance(value, (int, float)):
+#         return float(value)
+
+#     raw = str(value).strip()
+#     if not raw:
+#         return None
+
+#     lowered = raw.lower()
+#     if lowered in {"na", "n/a", "nan", "none", "null"}:
+#         return None
+
+#     is_negative_parentheses = raw.startswith("(") and raw.endswith(")")
+#     if is_negative_parentheses:
+#         raw = raw[1:-1].strip()
+
+#     raw = raw.replace(",", "").replace(" ", "")
+#     raw = _NUMBER_CLEAN_RE.sub("", raw)
+
+#     multiplier = 1.0
+#     if raw and raw[-1].lower() in {"k", "m", "b"}:
+#         suffix = raw[-1].lower()
+#         raw = raw[:-1]
+#         if suffix == "k":
+#             multiplier = 1_000.0
+#         elif suffix == "m":
+#             multiplier = 1_000_000.0
+#         else:
+#             multiplier = 1_000_000_000.0
+
+#     if raw.endswith("%"):
+#         raw = raw[:-1]
+
+#     try:
+#         parsed = float(raw) * multiplier
+#     except ValueError:
+#         return None
+
+#     if is_negative_parentheses:
+#         parsed *= -1.0
+#     return parsed
 
 
 def _format_number(value: float) -> str:
@@ -983,8 +1162,7 @@ def _pick_group_column(
     question: str,
 ) -> Optional[str]:
     candidate_columns = [
-        col for col in columns
-        if col not in numeric_columns and col != metric_column
+        col for col in columns if col not in numeric_columns and col != metric_column
     ]
     if not candidate_columns:
         return None
@@ -1024,8 +1202,7 @@ def _pick_row_answer_column(
     question: str,
 ) -> Optional[str]:
     candidate_columns = [
-        col for col in columns
-        if col not in numeric_columns and col != metric_column
+        col for col in columns if col not in numeric_columns and col != metric_column
     ]
     if not candidate_columns:
         return None
@@ -1064,7 +1241,11 @@ def _infer_aggregate_answer(
         return None
 
     numeric_columns = _detect_numeric_columns(rows)
-    metric_column = _pick_metric_column(columns, numeric_columns, question) if numeric_columns else None
+    metric_column = (
+        _pick_metric_column(columns, numeric_columns, question)
+        if numeric_columns
+        else None
+    )
 
     mode, operator, rank_aggregation = _detect_analytic_mode(question, metric_column)
     if not mode:
@@ -1099,7 +1280,9 @@ def _infer_aggregate_answer(
         return None
 
     top_n = _extract_top_n(question)
-    group_column = _pick_group_column(columns, numeric_columns, metric_for_mode, question)
+    group_column = _pick_group_column(
+        columns, numeric_columns, metric_for_mode, question
+    )
     has_group_phrase = bool(
         re.search(r"\b(by|per|each|group by)\b", question.lower())
         or _extract_group_hint(question)
@@ -1595,18 +1778,17 @@ def generate_highlights(
         overlap = question_tokens & val_tokens
         if overlap:
             # Weight keyword matches 2x, stop-word matches 0.5x
-            score = sum(
-                2.0 if tok in keywords else 0.5
-                for tok in overlap
-            )
+            score = sum(2.0 if tok in keywords else 0.5 for tok in overlap)
             max_possible = max(len(question_tokens), 1)
             highlight_id = f"d{dataset_id}_r{row_index}_{col}"
-            highlights.append({
-                "highlight_id": highlight_id,
-                "column": col,
-                "value": str(val),
-                "relevance": score / max_possible,
-            })
+            highlights.append(
+                {
+                    "highlight_id": highlight_id,
+                    "column": col,
+                    "value": str(val),
+                    "relevance": score / max_possible,
+                }
+            )
 
     highlights.sort(key=lambda h: h["relevance"], reverse=True)
     return highlights

@@ -1,6 +1,6 @@
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
-export type ServerStatus = "online" | "offline" | "unknown";
+export type ServerStatus = "Online" | "Offline" | "Unknown";
 export type IndexJobState = "queued" | "indexing" | "ready" | "error";
 
 export type TableRow = Record<string, unknown>;
@@ -246,7 +246,9 @@ export async function getSlice(
     column_count: data.column_count,
     has_header: data.has_header,
     columns: data.columns,
-    rows: (data.rows || []).map((row) => normalizeRowData(row.data ?? row.row_data)),
+    rows: (data.rows || []).map((row) =>
+      normalizeRowData(row.data ?? row.row_data),
+    ),
   };
 }
 
@@ -308,7 +310,10 @@ export async function deleteTable(
   return (await res.json()) as { deleted: number };
 }
 
-export async function renameTable(datasetId: number, name: string): Promise<{ name: string }> {
+export async function renameTable(
+  datasetId: number,
+  name: string,
+): Promise<{ name: string }> {
   const res = await fetch(`${API_BASE}/tables/${datasetId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -320,19 +325,38 @@ export async function renameTable(datasetId: number, name: string): Promise<{ na
   return (await res.json()) as { name: string };
 }
 
-export async function getMcpStatus(): Promise<{ status: ServerStatus }> {
+export async function getServerStatus(): Promise<{ status: ServerStatus }> {
   try {
-    const res = await fetch(`${API_BASE}/mcp-status`);
+    const res = await fetch(`${API_BASE}/health/deps`);
     if (!res.ok) {
-      return { status: "offline" };
+      return { status: "Offline" };
     }
 
     const data = (await res.json()) as { status?: string };
     if (data.status === "ok") {
-      return { status: "online" };
+      return { status: "Online" };
     }
-    return { status: "unknown" };
+    return { status: "Unknown" };
   } catch {
-    return { status: "offline" };
+    return { status: "Offline" };
   }
+}
+
+export type AggregateResponse = {
+  dataset_id: number;
+  metric_column: string | null;
+  group_by_column: string | null;
+  rowsResult: { group_value: string | null; aggregate_value: number }[];
+  sql_query: string;
+  url: string | null;
+};
+
+export async function aggregate(params: unknown): Promise<AggregateResponse> {
+  const res = await fetch(`${API_BASE}/aggregate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
 }
