@@ -84,11 +84,6 @@ def health_deps():
     }
 
 
-@app.get("/mcp-status")
-def mcp_status():
-    return {"status": "ok", "endpoint": "/mcp"}
-
-
 # checks if file is a csv or tsv based on file extension, raises HTTPException if not
 def validate_filename(filename: str) -> None:
     if not filename.lower().endswith((".csv", ".tsv")):
