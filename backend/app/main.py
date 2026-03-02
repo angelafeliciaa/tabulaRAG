@@ -18,7 +18,7 @@ from app.index_jobs import (
 )
 from app.indexing import index_dataset
 from app.models import Base, Dataset, DatasetColumn, DatasetRow
-from app.mcp_server import mcp
+from fastapi_mcp import FastApiMCP
 from app.routes_tables import router as tables_router
 from app.routes_query import router as query_router
 
@@ -31,9 +31,7 @@ async def lifespan(app: FastAPI):
         get_model()
     except Exception:
         pass
-
-    async with mcp.session_manager.run():
-        yield
+    yield
 
 
 app = FastAPI(title="TabulaRAG API", lifespan=lifespan)
@@ -49,15 +47,14 @@ app.add_middleware(
 
 app.include_router(tables_router)
 app.include_router(query_router)
-app.mount("/mcp", mcp.streamable_http_app())
 
 
-@app.get("/health")
+@app.get("/health", include_in_schema=False)
 def health():
     return {"status": "ok"}
 
 
-@app.get("/health/deps")
+@app.get("/health/deps", include_in_schema=False)
 def health_deps():
     postgres_ok = False
     qdrant_ok = False
@@ -201,7 +198,7 @@ def _index_dataset_safe(dataset_id: int, total_rows: int) -> None:
         mark_index_job_error(dataset_id, total_rows, f"Indexing failed: {exc}")
 
 
-@app.post("/ingest")
+@app.post("/ingest", include_in_schema=False)
 def ingest_table(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
@@ -294,3 +291,11 @@ def ingest_table(
         "delimiter": dataset_delimiter,
         "has_header": dataset_has_header,
     }
+
+
+
+mcp = FastApiMCP(
+    app,
+    name="TabulaRAG",
+)
+mcp.mount_http()
