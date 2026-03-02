@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from app.db import SessionLocal
 from app.index_jobs import clear_index_job, get_index_jobs
 from app.models import Dataset, DatasetColumn, DatasetRow
-from app.qdrant_client import delete_collection
+from app.qdrant_client import delete_collection, get_collection_point_count
 
 router = APIRouter()
 
@@ -39,7 +39,11 @@ def _delete_collection_safe(dataset_id: int) -> None:
         pass
 
 
-@router.get("/tables")
+@router.get(
+    "/tables",
+    summary="List all datasets",
+    description="Returns all available datasets with their IDs, names, and metadata. Always call this first to discover valid dataset IDs.",
+)
 def list_tables():
     with SessionLocal() as db:
         datasets = (
@@ -58,52 +62,49 @@ def list_tables():
         ]
 
 
-@router.get("/tables/index-status")
-def list_index_status(dataset_id: Optional[List[int]] = Query(default=None)):
+@router.get(
+    "/tables/{dataset_id}/columns",
+    summary="List all columns for a dataset",
+    description="Returns column names and indexes for a dataset. Always call this to understand the data structure and actual column names before querying.",
+)
+def get_cols_for_dataset(dataset_id: int):
     with SessionLocal() as db:
-        query = select(Dataset.id, Dataset.row_count)
-        if dataset_id:
-            query = query.where(Dataset.id.in_(dataset_id))
-        dataset_rows = db.execute(query.order_by(Dataset.id.desc())).all()
+        dataset = db.execute(
+            select(Dataset).where(Dataset.id == dataset_id)
+        ).scalar_one_or_none()
+        if dataset is None:
+            raise HTTPException(status_code=404, detail="Dataset not found.")
 
-    dataset_ids = [int(row[0]) for row in dataset_rows]
-    tracked_statuses = get_index_jobs(dataset_ids)
-
-    response = []
-    for raw_dataset_id, raw_row_count in dataset_rows:
-        current_dataset_id = int(raw_dataset_id)
-        current_row_count = int(raw_row_count or 0)
-        tracked = tracked_statuses.get(current_dataset_id)
-
-        if tracked:
-            item = dict(tracked)
-            if int(item.get("total_rows", 0)) <= 0 and current_row_count > 0:
-                item["total_rows"] = current_row_count
-            response.append(item)
-            continue
-
-        response.append(
-            {
-                "dataset_id": current_dataset_id,
-                "state": "ready",
-                "progress": 100.0,
-                "processed_rows": current_row_count,
-                "total_rows": current_row_count,
-                "message": "Vector index is ready.",
-                "started_at": None,
-                "updated_at": None,
-                "finished_at": None,
-            }
+        columns = (
+            db.execute(
+                select(DatasetColumn)
+                .where(DatasetColumn.dataset_id == dataset_id)
+                .order_by(DatasetColumn.column_index)
+            )
+            .scalars()
+            .all()
         )
 
-    return response
+    return {
+        "dataset_id": dataset_id,
+        "columns": [{"column_index": c.column_index, "name": c.name} for c in columns],
+    }
 
 
-@router.get("/tables/{dataset_id}/slice")
+@router.get(
+    "/tables/{dataset_id}/slice",
+    summary="Browse raw rows from a dataset",
+    description="Returns rows in order by row index. Use this when the user wants to see or explore raw data, not for analytical questions like sums or rankings.",
+)
 def get_table_slice(
     dataset_id: int,
-    offset: int = 0,
-    limit: int = 30,
+    offset: int = Query(
+        default=0,
+        description="Number of rows to skip. Use 0 to start from the beginning.",
+    ),
+    limit: int = Query(
+        default=30, description="Number of rows to return. Default is 30."
+    ),
 ):
     with SessionLocal() as db:
         dataset = db.get(Dataset, dataset_id)
@@ -147,12 +148,78 @@ def get_table_slice(
         }
 
 
-@router.delete("/tables/{dataset_id}")
+@router.get("/tables/index-status", include_in_schema=False)
+def list_index_status(dataset_id: Optional[List[int]] = Query(default=None)):
+    with SessionLocal() as db:
+        query = select(Dataset.id, Dataset.row_count)
+        if dataset_id:
+            query = query.where(Dataset.id.in_(dataset_id))
+        dataset_rows = db.execute(query.order_by(Dataset.id.desc())).all()
+
+    dataset_ids = [int(row[0]) for row in dataset_rows]
+    tracked_statuses = get_index_jobs(dataset_ids)
+
+    response = []
+    for raw_dataset_id, raw_row_count in dataset_rows:
+        current_dataset_id = int(raw_dataset_id)
+        current_row_count = int(raw_row_count or 0)
+        tracked = tracked_statuses.get(current_dataset_id)
+
+        if tracked:
+            item = dict(tracked)
+            if int(item.get("total_rows", 0)) <= 0 and current_row_count > 0:
+                item["total_rows"] = current_row_count
+            response.append(item)
+            continue
+
+        point_count: Optional[int] = None
+        try:
+            point_count = get_collection_point_count(current_dataset_id)
+        except Exception:
+            point_count = None
+
+        if (
+            point_count is not None
+            and current_row_count > 0
+            and int(point_count) < current_row_count
+        ):
+            progress = float(point_count) / float(current_row_count) * 100.0
+            response.append(
+                {
+                    "dataset_id": current_dataset_id,
+                    "state": "indexing",
+                    "progress": progress,
+                    "processed_rows": int(point_count),
+                    "total_rows": current_row_count,
+                    "message": "Indexing vectors...",
+                    "started_at": None,
+                    "updated_at": None,
+                    "finished_at": None,
+                }
+            )
+            continue
+
+        response.append(
+            {
+                "dataset_id": current_dataset_id,
+                "state": "ready",
+                "progress": 100.0,
+                "processed_rows": current_row_count,
+                "total_rows": current_row_count,
+                "message": "Vector index is ready.",
+                "started_at": None,
+                "updated_at": None,
+                "finished_at": None,
+            }
+        )
+
+    return response
+
+
+@router.delete("/tables/{dataset_id}", include_in_schema=False)
 def delete_table(dataset_id: int, background_tasks: BackgroundTasks):
     with SessionLocal() as db:
-        exists = db.execute(
-            select(Dataset.id).where(Dataset.id == dataset_id)
-        ).first()
+        exists = db.execute(select(Dataset.id).where(Dataset.id == dataset_id)).first()
         if not exists:
             raise HTTPException(status_code=404, detail="Table not found")
         # Use direct SQL deletes to avoid expensive ORM cascade object loading.
@@ -165,7 +232,7 @@ def delete_table(dataset_id: int, background_tasks: BackgroundTasks):
     return {"deleted": dataset_id}
 
 
-@router.patch("/tables/{dataset_id}")
+@router.patch("/tables/{dataset_id}", include_in_schema=False)
 def rename_table(dataset_id: int, body: RenameRequest):
     with SessionLocal() as db:
         dataset = db.get(Dataset, dataset_id)

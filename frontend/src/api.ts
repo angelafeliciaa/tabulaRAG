@@ -307,3 +307,22 @@ export async function getServerStatus(): Promise<{ status: ServerStatus }> {
     return { status: "Offline" };
   }
 }
+
+export type AggregateResponse = {
+  dataset_id: number;
+  metric_column: string | null;
+  group_by_column: string | null;
+  rowsResult: { group_value: string | null; aggregate_value: number }[];
+  sql_query: string;
+  url: string | null;
+};
+
+export async function aggregate(params: unknown): Promise<AggregateResponse> {
+  const res = await fetch(`${API_BASE}/aggregate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

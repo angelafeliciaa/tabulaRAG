@@ -6,6 +6,7 @@ import sunIcon from "./images/sun.png";
 import HighlightView from "./pages/HighlightView";
 import TableView from "./pages/TableView";
 import Upload from "./pages/Upload";
+import AggregateTableView from "./pages/AggregateTable";
 
 export default function App() {
   const [theme, setTheme] = useState<"dark" | "light">(() => {
@@ -70,6 +71,7 @@ export default function App() {
       <div className="content">
         <Routes>
           <Route path="/" element={<Upload />} />
+          <Route path="/tables/virtual" element={<AggregateTableView />} />
           <Route path="/tables/:datasetId" element={<TableView />} />
           <Route path="/highlight/:highlightId" element={<HighlightView />} />
         </Routes>
