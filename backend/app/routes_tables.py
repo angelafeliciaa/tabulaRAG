@@ -9,6 +9,7 @@ from app.index_jobs import clear_index_job, get_index_jobs
 from app.models import Dataset, DatasetColumn, DatasetRow
 from app.qdrant_client import delete_collection, get_collection_point_count
 from app.typed_values import strip_internal_fields
+from app.name_guard import normalize_dataset_name_or_raise
 
 router = APIRouter()
 
@@ -239,8 +240,6 @@ def rename_table(dataset_id: int, body: RenameRequest):
         dataset = db.get(Dataset, dataset_id)
         if not dataset:
             raise HTTPException(status_code=404, detail="Table not found")
-        if not body.name.strip():
-            raise HTTPException(status_code=400, detail="Name cannot be empty")
-        dataset.name = body.name.strip()
+        dataset.name = normalize_dataset_name_or_raise(body.name)
         db.commit()
         return {"name": dataset.name}

@@ -25,6 +25,7 @@ from fastapi_mcp import FastApiMCP
 from app.routes_tables import router as tables_router
 from app.routes_query import router as query_router
 from app.typed_values import normalize_row_obj
+from app.name_guard import normalize_dataset_name_or_raise
 
 
 logger = logging.getLogger(__name__)
@@ -126,24 +127,6 @@ def _normalize_headers(headers: List[str]) -> List[str]:
 
 
 ROW_INSERT_BATCH_SIZE = int(os.getenv("ROW_INSERT_BATCH_SIZE", "20000"))
-MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "100"))
-MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
-
-
-def validate_upload_size(upload: UploadFile) -> None:
-    try:
-        upload.file.seek(0, os.SEEK_END)
-        size_bytes = upload.file.tell()
-        upload.file.seek(0)
-    except Exception:
-        # Fallback to best effort if stream size is unavailable.
-        return
-
-    if size_bytes > MAX_UPLOAD_SIZE_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File size exceeds {MAX_UPLOAD_SIZE_MB} MB limit.",
-        )
 
 
 def _detect_delimiter(filename: str | None) -> str:
@@ -317,11 +300,12 @@ def ingest_table(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename.")
     validate_filename(file.filename)
-    validate_upload_size(file)
 
     headers, rows_iter, detected_delimiter = _iter_rows(file, has_header)
 
-    dataset_display_name = dataset_name or os.path.splitext(file.filename)[0]
+    dataset_display_name = normalize_dataset_name_or_raise(
+        dataset_name or os.path.splitext(file.filename)[0]
+    )
 
     with SessionLocal() as db:
         dataset = Dataset(

@@ -53,7 +53,7 @@ function parseDateToEpoch(value: string): number | null {
 
   // YYYY-MM-DD (or YYYY/MM/DD, YYYY.MM.DD) with optional time.
   const isoMatch = text.match(
-    /^(\d{4})[\/.-](\d{1,2})[\/.-](\d{1,2})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/,
+    /^(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/,
   );
   if (isoMatch) {
     const year = Number(isoMatch[1]);
@@ -67,7 +67,7 @@ function parseDateToEpoch(value: string): number | null {
 
   // DD/MM/YYYY or MM/DD/YYYY (delimiter can be / . -). If ambiguous, prefer DD/MM.
   const dmyOrMdyMatch = text.match(
-    /^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/,
+    /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/,
   );
   if (dmyOrMdyMatch) {
     const a = Number(dmyOrMdyMatch[1]);
@@ -249,7 +249,7 @@ export default function DataTable({
 
       return left.originalIndex - right.originalIndex;
     });
-  }, [rowIndices, rowOffset, rows, sortColumn, sortDirection]);
+  }, [rowIndices, rowOffset, rows, sortColumn, sortDirection, sortable]);
 
   function toggleSort(column: string) {
     if (sortColumn !== column) {
