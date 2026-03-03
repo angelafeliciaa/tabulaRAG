@@ -411,6 +411,67 @@ h3 {
   background: rgba(79, 70, 229, 0.18);
 }
 
+.confirm-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 24;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(6, 12, 22, 0.5);
+}
+
+.confirm-modal {
+  width: min(440px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow);
+  padding: 18px 18px 16px;
+}
+
+.confirm-modal h3 {
+  margin: 0 0 8px;
+}
+
+.confirm-modal p {
+  margin: 0;
+}
+
+.confirm-modal-table-name {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.confirm-modal-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.confirm-delete-button {
+  border: 1px solid #dc2626;
+  background: #dc2626;
+  color: #fff;
+  border-radius: 10px;
+  padding: 9px 14px;
+  min-width: 156px;
+}
+
+.confirm-delete-button:hover {
+  transform: none;
+  box-shadow: none;
+  border-color: #b91c1c;
+  background: #b91c1c;
+}
+
+.confirm-delete-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 @keyframes toastDrop {
   0% {
     opacity: 0;

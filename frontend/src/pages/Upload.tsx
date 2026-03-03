@@ -17,26 +17,14 @@ import logo from "../images/logo.png";
 import uploadLogo from "../images/upload.png";
 
 const PENDING_UPLOAD_SESSION_KEY = "tabularag_pending_upload";
-const PENDING_DELETE_SESSION_KEY = "tabularag_pending_delete";
 const PINNED_TABLES_STORAGE_KEY = "tabularag_pinned_table_ids";
-const DELETE_UNDO_WINDOW_MS = 5600;
 const SUCCESS_TOAST_MS = 2800;
 const MAX_UPLOAD_SIZE_MB = 100;
 const MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024;
 const INDEX_PROGRESS_DRIFT_STEP = 0.35;
 const INDEX_PROGRESS_DRIFT_CAP = 99.4;
 
-type ToastState =
-  | { kind: "success"; message: string }
-  | { kind: "delete"; message: string };
-
-type PendingDelete = {
-  table: TableSummary;
-  indexStatus: TableIndexStatus;
-  previousActiveTableId: number | null;
-  previousPreview: TableSlice | null;
-  timeoutId: number;
-};
+type ToastState = { kind: "success"; message: string };
 
 function getErrorMessage(error: unknown): string {
   const normalize = (message: string): string => {
@@ -125,8 +113,11 @@ export default function Upload() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [activeTableId, setActiveTableId] = useState<number | null>(null);
   const [toast, setToast] = useState<ToastState | null>(null);
+  const [deleteConfirmTable, setDeleteConfirmTable] = useState<TableSummary | null>(null);
   const [showScrollHint, setShowScrollHint] = useState(false);
+  const [uploadedAtBottom, setUploadedAtBottom] = useState(false);
   const [showPreviewScrollHint, setShowPreviewScrollHint] = useState(false);
+  const [previewAtBottom, setPreviewAtBottom] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingName, setEditingName] = useState("");
   const [renameHintId, setRenameHintId] = useState<number | null>(null);
@@ -160,8 +151,6 @@ export default function Upload() {
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const estimateJobRef = useRef(0);
   const toastTimerRef = useRef<number | null>(null);
-  const pendingDeleteRef = useRef<PendingDelete | null>(null);
-  const pendingDeleteIdsRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -263,9 +252,7 @@ export default function Upload() {
   }, []);
 
   const refresh = useCallback(async () => {
-    const nextTables = (await listTables()).filter(
-      (table) => !pendingDeleteIdsRef.current.has(table.dataset_id),
-    );
+    const nextTables = await listTables();
     setTables(nextTables);
     try {
       await refreshIndexStatuses(nextTables);
@@ -273,38 +260,6 @@ export default function Upload() {
       // Keep table list usable even if status polling fails.
     }
   }, [refreshIndexStatuses]);
-
-  function setPendingDeleteSession(datasetId: number, tableName: string) {
-    window.sessionStorage.setItem(
-      PENDING_DELETE_SESSION_KEY,
-      JSON.stringify({
-        dataset_id: datasetId,
-        table_name: tableName,
-        created_at: new Date().toISOString(),
-      }),
-    );
-  }
-
-  function clearPendingDeleteSession(datasetId?: number) {
-    if (datasetId === undefined) {
-      window.sessionStorage.removeItem(PENDING_DELETE_SESSION_KEY);
-      return;
-    }
-
-    const pendingRaw = window.sessionStorage.getItem(PENDING_DELETE_SESSION_KEY);
-    if (!pendingRaw) {
-      return;
-    }
-
-    try {
-      const pending = JSON.parse(pendingRaw) as { dataset_id?: unknown };
-      if (typeof pending.dataset_id === "number" && pending.dataset_id === datasetId) {
-        window.sessionStorage.removeItem(PENDING_DELETE_SESSION_KEY);
-      }
-    } catch {
-      window.sessionStorage.removeItem(PENDING_DELETE_SESSION_KEY);
-    }
-  }
 
   useEffect(() => {
     const pendingRaw = window.sessionStorage.getItem(PENDING_UPLOAD_SESSION_KEY);
@@ -327,48 +282,6 @@ export default function Upload() {
       `Page was reloaded during upload for ${fileLabel}. Check Uploaded tables below for the result.`,
     );
   }, []);
-
-  useEffect(() => {
-    const pendingRaw = window.sessionStorage.getItem(PENDING_DELETE_SESSION_KEY);
-    if (!pendingRaw) {
-      return;
-    }
-
-    let datasetId: number | null = null;
-
-    try {
-      const pending = JSON.parse(pendingRaw) as { dataset_id?: unknown };
-      if (typeof pending.dataset_id === "number" && Number.isFinite(pending.dataset_id)) {
-        datasetId = pending.dataset_id;
-      }
-    } catch {
-      window.sessionStorage.removeItem(PENDING_DELETE_SESSION_KEY);
-      return;
-    }
-
-    if (datasetId === null) {
-      window.sessionStorage.removeItem(PENDING_DELETE_SESSION_KEY);
-      return;
-    }
-
-    pendingDeleteIdsRef.current.add(datasetId);
-
-    void (async () => {
-      try {
-        await deleteTable(datasetId);
-      } catch (error: unknown) {
-        if (!isTableNotFoundError(error)) {
-          setErr(getErrorMessage(error));
-        }
-      } finally {
-        pendingDeleteIdsRef.current.delete(datasetId);
-        clearPendingDeleteSession(datasetId);
-        await refresh().catch(() => {
-          // Keep UI responsive even if immediate refresh fails.
-        });
-      }
-    })();
-  }, [refresh]);
 
   useEffect(() => {
     refresh().catch((error: unknown) => {
@@ -415,20 +328,25 @@ export default function Upload() {
   useEffect(() => {
     return () => {
       clearToastTimer();
-      const pendingDelete = pendingDeleteRef.current;
-      if (pendingDelete) {
-        window.clearTimeout(pendingDelete.timeoutId);
-        pendingDeleteRef.current = null;
-        void deleteTable(pendingDelete.table.dataset_id, { keepalive: true })
-          .catch(() => {
-            // Best-effort cleanup on unmount/navigation.
-          })
-          .finally(() => {
-            clearPendingDeleteSession(pendingDelete.table.dataset_id);
-          });
-      }
     };
   }, []);
+
+  useEffect(() => {
+    if (!deleteConfirmTable) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !deletingTableIds[deleteConfirmTable.dataset_id]) {
+        setDeleteConfirmTable(null);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [deleteConfirmTable, deletingTableIds]);
 
   useEffect(() => {
     if (tables.length === 0) {
@@ -450,13 +368,16 @@ export default function Upload() {
   useEffect(() => {
     const element = tablesScrollRef.current;
     if (!element) {
+      setShowScrollHint(false);
+      setUploadedAtBottom(false);
       return;
     }
 
     const updateHint = () => {
       const atBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 4;
       const canScroll = element.scrollHeight > element.clientHeight + 2;
-      setShowScrollHint(canScroll && !atBottom);
+      setShowScrollHint(canScroll);
+      setUploadedAtBottom(atBottom);
     };
 
     updateHint();
@@ -474,13 +395,15 @@ export default function Upload() {
     const element = container?.querySelector(".table-scroll") as HTMLDivElement | null;
     if (!element) {
       setShowPreviewScrollHint(false);
+      setPreviewAtBottom(false);
       return;
     }
 
     const updateHint = () => {
       const atBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 4;
       const canScroll = element.scrollHeight > element.clientHeight + 2;
-      setShowPreviewScrollHint(canScroll && !atBottom);
+      setShowPreviewScrollHint(canScroll);
+      setPreviewAtBottom(atBottom);
     };
 
     const rafId = window.requestAnimationFrame(updateHint);
@@ -571,137 +494,56 @@ export default function Upload() {
     }
   }
 
-  function defaultIndexStatusForTable(table: TableSummary): TableIndexStatus {
-    return {
-      dataset_id: table.dataset_id,
-      state: "ready",
-      progress: 100,
-      processed_rows: table.row_count,
-      total_rows: table.row_count,
-      message: "Vector index is ready.",
-      started_at: null,
-      updated_at: null,
-      finished_at: null,
-    };
-  }
-
-  function restoreDeletedTable(pending: PendingDelete) {
-    pendingDeleteIdsRef.current.delete(pending.table.dataset_id);
-    clearPendingDeleteSession(pending.table.dataset_id);
-    setTables((previous) => {
-      if (previous.some((table) => table.dataset_id === pending.table.dataset_id)) {
-        return previous;
-      }
-      const next = [...previous, pending.table];
-      next.sort((a, b) => b.dataset_id - a.dataset_id);
-      return next;
-    });
-    setIndexStatusByTable((previous) => ({
-      ...previous,
-      [pending.table.dataset_id]: pending.indexStatus,
-    }));
-
-    if (pending.previousActiveTableId === pending.table.dataset_id) {
-      setActiveTableId(pending.table.dataset_id);
-      setPreview(pending.previousPreview);
-    }
-  }
-
-  async function commitPendingDelete(pending: PendingDelete) {
-    const datasetId = pending.table.dataset_id;
-    setDeletingTableIds((previous) => ({ ...previous, [datasetId]: true }));
-
-    try {
-      await deleteTable(datasetId);
-    } catch (error: unknown) {
-      if (isTableNotFoundError(error)) {
-        return;
-      }
-      setErr(getErrorMessage(error));
-      restoreDeletedTable(pending);
-    } finally {
-      setPinnedTableIds((previous) =>
-        previous.filter((currentId) => currentId !== datasetId),
-      );
-      pendingDeleteIdsRef.current.delete(datasetId);
-      clearPendingDeleteSession(datasetId);
-      setDeletingTableIds((previous) => {
-        const next = { ...previous };
-        delete next[datasetId];
-        return next;
-      });
-    }
-  }
-
   async function onDelete(datasetId: number) {
     if (busy || deletingTableIds[datasetId]) {
       return;
     }
     const table = tables.find((current) => current.dataset_id === datasetId);
     if (!table) {
+      setDeleteConfirmTable(null);
       return;
-    }
-
-    // If another delete is pending undo, commit it immediately before starting a new one.
-    const previousPendingDelete = pendingDeleteRef.current;
-    if (previousPendingDelete) {
-      window.clearTimeout(previousPendingDelete.timeoutId);
-      pendingDeleteRef.current = null;
-      void commitPendingDelete(previousPendingDelete);
     }
 
     clearToastTimer();
     setErr(null);
+    setDeletingTableIds((previous) => ({ ...previous, [datasetId]: true }));
 
-    const pendingDelete: PendingDelete = {
-      table,
-      indexStatus: indexStatusByTable[datasetId] || defaultIndexStatusForTable(table),
-      previousActiveTableId: activeTableId,
-      previousPreview: preview,
-      timeoutId: 0,
-    };
-
-    pendingDeleteIdsRef.current.add(datasetId);
-    setPendingDeleteSession(datasetId, table.name);
-    setTables((previous) => previous.filter((current) => current.dataset_id !== datasetId));
-    setIndexStatusByTable((previous) => {
-      const next = { ...previous };
-      delete next[datasetId];
-      return next;
-    });
-    if (activeTableId === datasetId) {
-      setActiveTableId(null);
-      setPreview(null);
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      const currentPendingDelete = pendingDeleteRef.current;
-      if (!currentPendingDelete || currentPendingDelete.table.dataset_id !== datasetId) {
-        return;
+    try {
+      await deleteTable(datasetId);
+      setTables((previous) => previous.filter((current) => current.dataset_id !== datasetId));
+      setPinnedTableIds((previous) =>
+        previous.filter((currentId) => currentId !== datasetId),
+      );
+      setIndexStatusByTable((previous) => {
+        const next = { ...previous };
+        delete next[datasetId];
+        return next;
+      });
+      setDeleteConfirmTable(null);
+      showSuccessToast(`Successfully deleted table '${table.name}'`);
+    } catch (error: unknown) {
+      if (isTableNotFoundError(error)) {
+        setTables((previous) => previous.filter((current) => current.dataset_id !== datasetId));
+        setPinnedTableIds((previous) =>
+          previous.filter((currentId) => currentId !== datasetId),
+        );
+        setIndexStatusByTable((previous) => {
+          const next = { ...previous };
+          delete next[datasetId];
+          return next;
+        });
+        setDeleteConfirmTable(null);
+        showSuccessToast(`Successfully deleted table '${table.name}'`);
+      } else {
+        setErr(getErrorMessage(error));
       }
-      pendingDeleteRef.current = null;
-      setToast(null);
-      void commitPendingDelete(currentPendingDelete);
-    }, DELETE_UNDO_WINDOW_MS);
-
-    pendingDelete.timeoutId = timeoutId;
-    pendingDeleteRef.current = pendingDelete;
-    setToast({
-      kind: "delete",
-      message: `Successfully deleted table '${table.name}'`,
-    });
-  }
-
-  function onUndoDelete() {
-    const pendingDelete = pendingDeleteRef.current;
-    if (!pendingDelete) {
-      return;
+    } finally {
+      setDeletingTableIds((previous) => {
+        const next = { ...previous };
+        delete next[datasetId];
+        return next;
+      });
     }
-    window.clearTimeout(pendingDelete.timeoutId);
-    pendingDeleteRef.current = null;
-    clearPendingDeleteSession(pendingDelete.table.dataset_id);
-    restoreDeletedTable(pendingDelete);
-    showSuccessToast(`Restored table '${pendingDelete.table.name}'`);
   }
 
   async function onRename(datasetId: number) {
@@ -824,6 +666,9 @@ export default function Upload() {
     activeTableId !== null
       ? tables.find((table) => table.dataset_id === activeTableId)?.name || "Table"
       : null;
+  const deleteConfirmBusy = deleteConfirmTable
+    ? Boolean(deletingTableIds[deleteConfirmTable.dataset_id])
+    : false;
   const pinnedTableIdSet = useMemo(() => new Set(pinnedTableIds), [pinnedTableIds]);
   const sortedTables = useMemo(() => {
     const sortByRecency = (a: TableSummary, b: TableSummary): number => {
@@ -870,6 +715,10 @@ export default function Upload() {
     if (!element) {
       return;
     }
+    if (uploadedAtBottom) {
+      element.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
     element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
   }
 
@@ -879,19 +728,68 @@ export default function Upload() {
     if (!element) {
       return;
     }
+    if (previewAtBottom) {
+      element.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
     element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
   }
 
   return (
     <div className="page page-stack">
       {toast && (
-        <div className={`toast ${toast.kind === "delete" ? "delete slow" : "success"}`}>
+        <div className="toast success">
           <span>{toast.message}</span>
-          {toast.kind === "delete" && (
-            <button type="button" className="toast-action" onClick={onUndoDelete}>
-              Undo
-            </button>
-          )}
+        </div>
+      )}
+
+      {deleteConfirmTable && (
+        <div
+          className="confirm-modal-overlay"
+          onClick={() => {
+            if (!deleteConfirmBusy) {
+              setDeleteConfirmTable(null);
+            }
+          }}
+        >
+          <div
+            className="confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-confirm-title"
+            aria-describedby="delete-confirm-description"
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <h3 id="delete-confirm-title">Delete table permanently?</h3>
+            <p id="delete-confirm-description" className="small">
+              This will permanently delete{" "}
+              <span className="confirm-modal-table-name">{deleteConfirmTable.name}</span>. This action cannot be undone.
+            </p>
+            <div className="confirm-modal-actions">
+              <button
+                type="button"
+                className="glass"
+                onClick={() => {
+                  setDeleteConfirmTable(null);
+                }}
+                disabled={deleteConfirmBusy}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="confirm-delete-button"
+                onClick={() => {
+                  void onDelete(deleteConfirmTable.dataset_id);
+                }}
+                disabled={deleteConfirmBusy}
+              >
+                {deleteConfirmBusy ? "Deleting..." : "Permanently delete"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1147,7 +1045,7 @@ export default function Upload() {
                       type="button"
                       className="icon-button danger"
                       onClick={() => {
-                        void onDelete(table.dataset_id);
+                        setDeleteConfirmTable(table);
                       }}
                       aria-label={`Delete ${table.name}`}
                       title="Delete table"
@@ -1169,10 +1067,10 @@ export default function Upload() {
             type="button"
             className="scroll-indicator uploaded-scroll-indicator"
             onClick={scrollUploadedTablesToBottom}
-            aria-label="Scroll uploaded tables to bottom"
-            title="Scroll to bottom"
+            aria-label={uploadedAtBottom ? "Scroll uploaded tables to top" : "Scroll uploaded tables to bottom"}
+            title={uploadedAtBottom ? "Scroll to top" : "Scroll to bottom"}
           >
-            ▼
+            {uploadedAtBottom ? "▲" : "▼"}
           </button>
         )}
 
@@ -1209,10 +1107,10 @@ export default function Upload() {
             type="button"
             className="scroll-indicator preview-scroll-indicator"
             onClick={scrollPreviewToBottom}
-            aria-label="Scroll table preview to bottom"
-            title="Scroll to bottom"
+            aria-label={previewAtBottom ? "Scroll table preview to top" : "Scroll table preview to bottom"}
+            title={previewAtBottom ? "Scroll to top" : "Scroll to bottom"}
           >
-            ▼
+            {previewAtBottom ? "▲" : "▼"}
           </button>
         )}
 
