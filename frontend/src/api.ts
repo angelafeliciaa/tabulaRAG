@@ -252,42 +252,6 @@ export async function getSlice(
   };
 }
 
-export async function getFullTableSlice(
-  datasetId: number,
-  rowCountHint: number,
-  chunkSize = 2000,
-): Promise<TableSlice> {
-  const normalizedRowCountHint = Math.max(0, Math.trunc(rowCountHint));
-  const normalizedChunkSize = Math.max(1, Math.trunc(chunkSize));
-  const initialLimit = Math.max(1, Math.min(normalizedChunkSize, normalizedRowCountHint || 1));
-  const firstSlice = await getSlice(datasetId, 0, initialLimit);
-  const totalRows = Math.max(normalizedRowCountHint, Math.max(0, firstSlice.row_count || 0));
-
-  if (totalRows === 0) {
-    return { ...firstSlice, offset: 0, limit: 0, rows: [] };
-  }
-
-  const rows: TableRow[] = [...firstSlice.rows];
-  let nextOffset = rows.length;
-
-  while (nextOffset < totalRows) {
-    const nextLimit = Math.min(totalRows, nextOffset + normalizedChunkSize);
-    const nextSlice = await getSlice(datasetId, nextOffset, nextLimit);
-    if (!nextSlice.rows.length) {
-      break;
-    }
-    rows.push(...nextSlice.rows);
-    nextOffset += nextSlice.rows.length;
-  }
-
-  return {
-    ...firstSlice,
-    offset: 0,
-    limit: rows.length,
-    rows,
-  };
-}
-
 export async function getHighlight(highlightId: string): Promise<HighlightResponse> {
   const res = await fetch(`${API_BASE}/highlights/${highlightId}`);
   if (!res.ok) {
