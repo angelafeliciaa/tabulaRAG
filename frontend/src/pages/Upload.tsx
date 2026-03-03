@@ -14,6 +14,7 @@ import {
 } from "../api";
 import DataTable from "../components/DataTable";
 import logo from "../images/logo.png";
+import openIcon from "../images/open.png";
 import uploadLogo from "../images/upload.png";
 
 const PENDING_UPLOAD_SESSION_KEY = "tabularag_pending_upload";
@@ -147,6 +148,7 @@ export default function Upload() {
   >({});
   const tablesScrollRef = useRef<HTMLDivElement | null>(null);
   const previewAreaRef = useRef<HTMLDivElement | null>(null);
+  const uploadNameInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const estimateJobRef = useRef(0);
@@ -324,6 +326,26 @@ export default function Upload() {
       window.cancelAnimationFrame(rafId);
     };
   }, [editingId, busy]);
+
+  useEffect(() => {
+    if (!file || busy) {
+      return;
+    }
+
+    const rafId = window.requestAnimationFrame(() => {
+      const input = uploadNameInputRef.current;
+      if (!input) {
+        return;
+      }
+      input.focus();
+      const cursorIndex = input.value.length;
+      input.setSelectionRange(cursorIndex, cursorIndex);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [file, busy]);
 
   useEffect(() => {
     return () => {
@@ -835,8 +857,12 @@ export default function Upload() {
                 className="file-input-hidden"
               />
               <input
+                ref={uploadNameInputRef}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 style={{ minWidth: 240 }}
                 disabled={busy}
               />
@@ -976,6 +1002,9 @@ export default function Upload() {
                           className={`rename-input ${
                             renameHintId === table.dataset_id ? "invalid" : ""
                           }`}
+                          autoCapitalize="none"
+                          autoCorrect="off"
+                          spellCheck={false}
                           placeholder={
                             renameHintId === table.dataset_id
                               ? "Name cannot be empty."
@@ -1078,19 +1107,24 @@ export default function Upload() {
 
       <div className="panel upload-preview">
         <div className="preview-header">
-          <h3 style={{ marginBottom: 0 }}>Table preview</h3>
-          <div className="preview-header-actions">
+          <div className="preview-header-left">
+            <h3 style={{ marginBottom: 0 }}>Table preview</h3>
             {activeTableName && (
               <div className="preview-table-name" aria-live="polite">
-                <span className="preview-table-name-label">{activeTableName}</span>
+                <span className="preview-table-name-value">{activeTableName}</span>
               </div>
             )}
-            {activeTableId !== null && (
-              <Link className="glass preview-open-full-link" to={`/tables/${activeTableId}`}>
-                Open Full Table
-              </Link>
-            )}
           </div>
+          {activeTableId !== null && (
+            <Link
+              className="preview-open-icon-link"
+              to={`/tables/${activeTableId}`}
+              aria-label="Open full table"
+              title="Open Full Table"
+            >
+              <img src={openIcon} alt="" aria-hidden="true" />
+            </Link>
+          )}
         </div>
 
         {previewBusy && <p className="small">Loading preview...</p>}

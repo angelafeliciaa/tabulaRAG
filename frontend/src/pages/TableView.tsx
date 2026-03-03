@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   getFullTableSlice,
@@ -7,6 +7,7 @@ import {
   type TableSummary,
 } from "../api";
 import DataTable from "../components/DataTable";
+import returnIcon from "../images/return.png";
 
 type DateViewMode = "default" | "mm-dd-yyyy" | "mon-dd-yyyy";
 
@@ -106,6 +107,9 @@ export default function TableView() {
   const [searchQuery, setSearchQuery] = useState("");
   const [dateViewMode, setDateViewMode] = useState<DateViewMode>("default");
   const [dateMenu, setDateMenu] = useState<{ x: number; y: number } | null>(null);
+  const [showScrollHint, setShowScrollHint] = useState(false);
+  const [tableAtBottom, setTableAtBottom] = useState(false);
+  const tableAreaRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!Number.isFinite(numericDatasetId) || numericDatasetId <= 0) {
@@ -227,6 +231,46 @@ export default function TableView() {
     };
   }, [dateMenu]);
 
+  useEffect(() => {
+    const container = tableAreaRef.current;
+    const element = container?.querySelector(".table-scroll") as HTMLDivElement | null;
+    if (!element) {
+      setShowScrollHint(false);
+      setTableAtBottom(false);
+      return;
+    }
+
+    const updateHint = () => {
+      const atBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 4;
+      const canScroll = element.scrollHeight > element.clientHeight + 2;
+      setShowScrollHint(canScroll);
+      setTableAtBottom(atBottom);
+    };
+
+    const rafId = window.requestAnimationFrame(updateHint);
+    element.addEventListener("scroll", updateHint);
+    window.addEventListener("resize", updateHint);
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      element.removeEventListener("scroll", updateHint);
+      window.removeEventListener("resize", updateHint);
+    };
+  }, [displayRows.length, data?.columns.length, loading, err, dateViewMode]);
+
+  function scrollTableToEdge() {
+    const container = tableAreaRef.current;
+    const element = container?.querySelector(".table-scroll") as HTMLDivElement | null;
+    if (!element) {
+      return;
+    }
+    if (tableAtBottom) {
+      element.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+  }
+
   if (!datasetId) {
     return null;
   }
@@ -260,8 +304,9 @@ export default function TableView() {
               placeholder="Search all columns"
               aria-label="Search rows"
             />
-            <Link className="glass table-view-back-link" to="/">
-              Back To All Uploads
+            <Link className="table-view-back-link" to="/">
+              <img src={returnIcon} alt="" aria-hidden="true" />
+              Back to All Uploads
             </Link>
           </div>
         </div>
@@ -269,7 +314,7 @@ export default function TableView() {
 
       {err && <p className="error">{err}</p>}
       {data && (
-        <div className="table-area">
+        <div className="table-area full-table-area" ref={tableAreaRef}>
           <DataTable
             columns={data.columns}
             rows={displayRows}
@@ -283,6 +328,17 @@ export default function TableView() {
               setDateMenu({ x: event.clientX, y: event.clientY });
             }}
           />
+          {showScrollHint && (
+            <button
+              type="button"
+              className="scroll-indicator full-table-scroll-indicator"
+              onClick={scrollTableToEdge}
+              aria-label={tableAtBottom ? "Scroll table to top" : "Scroll table to bottom"}
+              title={tableAtBottom ? "Scroll to top" : "Scroll to bottom"}
+            >
+              {tableAtBottom ? "▲" : "▼"}
+            </button>
+          )}
         </div>
       )}
       {dateMenu && (

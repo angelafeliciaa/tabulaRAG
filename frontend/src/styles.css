@@ -142,6 +142,11 @@ h3 {
   border: 1px solid var(--border);
 }
 
+:root[data-theme="dark"] .hero-logo {
+  filter: brightness(1.16) saturate(1.08);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
+}
+
 .hero-title {
   margin-top: 0;
   font-size: 28px;
@@ -384,33 +389,6 @@ h3 {
   border-color: rgba(34, 197, 94, 0.4);
 }
 
-.toast.delete {
-  color: #16a34a;
-  border-color: rgba(34, 197, 94, 0.45);
-}
-
-.toast.slow {
-  animation: toastDropSlow 5.6s ease forwards;
-}
-
-.toast-action {
-  border: 1px solid rgba(79, 70, 229, 0.35);
-  background: rgba(79, 70, 229, 0.1);
-  color: var(--text);
-  border-radius: 999px;
-  padding: 5px 10px;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-  box-shadow: none;
-}
-
-.toast-action:hover {
-  transform: none;
-  box-shadow: none;
-  background: rgba(79, 70, 229, 0.18);
-}
-
 .confirm-modal-overlay {
   position: fixed;
   inset: 0;
@@ -491,28 +469,6 @@ h3 {
   100% {
     opacity: 0;
     transform: translate(-50%, -10px);
-  }
-}
-
-@keyframes toastDropSlow {
-  0% {
-    opacity: 0;
-    transform: translate(-50%, -10px);
-  }
-
-  10% {
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
-
-  76% {
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
-
-  100% {
-    opacity: 0;
-    transform: translate(-50%, -8px);
   }
 }
 
@@ -1093,6 +1049,14 @@ ul {
   bottom: 12px;
 }
 
+.full-table-area {
+  position: relative;
+}
+
+.full-table-scroll-indicator {
+  bottom: 20px;
+}
+
 .file-input-hidden {
   display: none;
 }
@@ -1175,7 +1139,6 @@ ul {
   font-size: 14px;
   font-weight: 500;
   letter-spacing: 0.06em;
-  text-transform: uppercase;
   font-family: var(--font-sans);
   color: #111827;
   transition: color 0.16s ease;
@@ -1428,11 +1391,12 @@ ul {
   flex-wrap: wrap;
 }
 
-.preview-header-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
+.preview-header-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .preview-table-name {
@@ -1466,27 +1430,69 @@ ul {
   white-space: nowrap;
 }
 
-.preview-open-full-link,
+.preview-open-icon-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-elev-2);
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.preview-open-icon-link img {
+    width: 18px;
+    height: 18px;
+    object-fit: contain;
+}
+
+.preview-open-icon-link:hover {
+    background: var(--bg-elev);
+    border-color: var(--border-soft);
+}
+
+:root[data-theme="dark"] .preview-open-icon-link img {
+    filter: brightness(0) invert(1);
+    opacity: 0.92;
+}
+
 .table-view-back-link {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 34px;
-    padding: 0 12px;
-    border-radius: 10px;
-    border: 1px solid rgba(34, 197, 94, 0.28);
-    background: rgba(22, 163, 74, 0.08);
+    gap: 6px;
+    height: 38px;
+    padding: 0 14px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--bg-elev-2);
     color: var(--text);
     font-size: 12px;
     font-weight: 600;
     text-decoration: none;
-    transition: background 0.2s ease, border-color 0.2s ease;
+    transition:
+      background 0.16s ease,
+      border-color 0.16s ease,
+      color 0.16s ease;
 }
 
-.preview-open-full-link:hover,
 .table-view-back-link:hover {
-    background: rgba(22, 163, 74, 0.16);
-    border-color: rgba(34, 197, 94, 0.42);
+    background: var(--bg-elev);
+    border-color: var(--border-soft);
+    color: var(--text);
+}
+
+.table-view-back-link img {
+    width: 16px;
+    height: 16px;
+    object-fit: contain;
+    opacity: 0.82;
+}
+
+:root[data-theme="dark"] .table-view-back-link img {
+    filter: brightness(0) invert(1);
 }
 
 .table-view-tools {
@@ -1668,13 +1674,18 @@ tr:hover td {
     align-items: flex-start;
   }
 
-  .preview-table-name {
+  .preview-header-left {
     width: 100%;
-    justify-content: space-between;
+  }
+
+  .preview-table-name {
+    width: auto;
+    max-width: 100%;
   }
 
   .preview-table-name-value {
     max-width: 62vw;
+    font-size: 15px;
   }
 
   .tables-header-controls {
