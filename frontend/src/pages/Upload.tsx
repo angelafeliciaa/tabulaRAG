@@ -27,6 +27,7 @@ const SAFE_TABLE_NAME_MAX_LENGTH = 64;
 
 type ToastState = { id: number; kind: "success"; message: string };
 type UploadQueuePhase = "idle" | UploadProgress["phase"] | "success" | "error";
+type TableSortMode = "alphabet" | "rows" | "recent";
 type UploadQueueItem = {
   id: string;
   file: File;
@@ -195,6 +196,8 @@ export default function Upload() {
   const [editingName, setEditingName] = useState("");
   const [renameHintId, setRenameHintId] = useState<number | null>(null);
   const [tableSearchQuery, setTableSearchQuery] = useState("");
+  const [tableSortMode, setTableSortMode] = useState<TableSortMode>("recent");
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const [reloadNotice, setReloadNotice] = useState<string | null>(null);
   const [deletingTableIds, setDeletingTableIds] = useState<Record<number, boolean>>({});
   const [isDragActive, setIsDragActive] = useState(false);
@@ -223,6 +226,7 @@ export default function Upload() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const firstQueuedNameInputRef = useRef<HTMLInputElement | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
+  const sortMenuRef = useRef<HTMLDivElement | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -407,6 +411,32 @@ export default function Upload() {
       window.cancelAnimationFrame(rafId);
     };
   }, [editingId, busy]);
+
+  useEffect(() => {
+    if (!sortMenuOpen) {
+      return;
+    }
+
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (sortMenuRef.current && !sortMenuRef.current.contains(target)) {
+        setSortMenuOpen(false);
+      }
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSortMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [sortMenuOpen]);
 
   useEffect(() => {
     if (busy || uploadQueue.length === 0) {
@@ -970,7 +1000,23 @@ export default function Upload() {
     : false;
   const pinnedTableIdSet = useMemo(() => new Set(pinnedTableIds), [pinnedTableIds]);
   const sortedTables = useMemo(() => {
-    const sortByRecency = (a: TableSummary, b: TableSummary): number => {
+    const sortByMode = (a: TableSummary, b: TableSummary): number => {
+      if (tableSortMode === "alphabet") {
+        const byName = a.name.localeCompare(b.name, undefined, {
+          sensitivity: "base",
+          numeric: true,
+        });
+        if (byName !== 0) {
+          return byName;
+        }
+      } else if (tableSortMode === "rows") {
+        const byRows = b.row_count - a.row_count;
+        if (byRows !== 0) {
+          return byRows;
+        }
+      }
+
+      // Default/fallback ordering is most recent first.
       const aTime = Number.isFinite(Date.parse(a.created_at))
         ? Date.parse(a.created_at)
         : a.dataset_id;
@@ -987,10 +1033,10 @@ export default function Upload() {
       if (aPinned !== bPinned) {
         return aPinned ? -1 : 1;
       }
-      return sortByRecency(a, b);
+      return sortByMode(a, b);
     });
     return next;
-  }, [tables, pinnedTableIdSet]);
+  }, [tables, pinnedTableIdSet, tableSortMode]);
   const normalizedTableSearchQuery = tableSearchQuery.trim().toLowerCase();
   const filteredTables = useMemo(() => {
     if (!normalizedTableSearchQuery) {
@@ -1196,24 +1242,22 @@ export default function Upload() {
                       ? "Failed"
                       : item.phase === "success"
                         ? "100%"
-                      : item.phase === "processing"
-                        ? `${progressValue.toFixed(1)}%`
-                        : `${Math.round(progressValue)}%`;
+                        : item.phase === "processing"
+                          ? `${progressValue.toFixed(1)}%`
+                          : `${Math.round(progressValue)}%`;
                 const rowsLabel =
                   item.estimatedRows === null
                     ? "Rows: estimating..."
                     : `Rows: ${(processedRows ?? 0).toLocaleString()} / ${item.estimatedRows.toLocaleString()}`;
                 const progressFillWidth =
                   item.phase === "error" ? 100 : progressValue;
-                const progressFillClassName = `upload-progress-fill ${
-                  item.phase === "processing"
-                    ? "processing"
-                    : ""
-                } ${
-                  item.phase === "success"
+                const progressFillClassName = `upload-progress-fill ${item.phase === "processing"
+                  ? "processing"
+                  : ""
+                  } ${item.phase === "success"
                     ? "success"
                     : ""
-                } ${item.phase === "error" ? "error" : ""}`;
+                  } ${item.phase === "error" ? "error" : ""}`;
 
                 return (
                   <li key={item.id} className={`upload-queue-item ${item.phase}`}>
@@ -1341,6 +1385,56 @@ export default function Upload() {
                 aria-label="Search table name"
               />
             </label>
+            <div className="sort-menu-wrap" ref={sortMenuRef}>
+              <button
+                type="button"
+                className={`sort-toggle-button ${sortMenuOpen ? "active" : ""}`}
+                onClick={() => setSortMenuOpen((current) => !current)}
+                aria-haspopup="dialog"
+                aria-expanded={sortMenuOpen}
+                aria-label="Sort tables"
+                title="Sort tables"
+              >
+                <svg viewBox="0 0 24 24" role="presentation" className="sort-toggle-icon">
+                  <path d="M8.7 3.3a1 1 0 0 1 1.4 0l3 3a1 1 0 1 1-1.4 1.4L10.4 6.4V20a1 1 0 1 1-2 0V6.4L7.1 7.7a1 1 0 1 1-1.4-1.4l3-3zm6.6 17.4a1 1 0 0 1-1.4 0l-3-3a1 1 0 0 1 1.4-1.4l1.3 1.3V4a1 1 0 1 1 2 0v13.6l1.3-1.3a1 1 0 1 1 1.4 1.4l-3 3z" />
+                </svg>
+                <span className="sort-toggle-text">Sort</span>
+              </button>
+              {sortMenuOpen && (
+                <div className="sort-menu" role="dialog" aria-label="Sort options">
+                  <button
+                    type="button"
+                    className={`sort-menu-item ${tableSortMode === "recent" ? "active" : ""}`}
+                    onClick={() => {
+                      setTableSortMode("recent");
+                      setSortMenuOpen(false);
+                    }}
+                  >
+                    Most recent
+                  </button>
+                  <button
+                    type="button"
+                    className={`sort-menu-item ${tableSortMode === "rows" ? "active" : ""}`}
+                    onClick={() => {
+                      setTableSortMode("rows");
+                      setSortMenuOpen(false);
+                    }}
+                  >
+                    Most rows
+                  </button>
+                  <button
+                    type="button"
+                    className={`sort-menu-item ${tableSortMode === "alphabet" ? "active" : ""}`}
+                    onClick={() => {
+                      setTableSortMode("alphabet");
+                      setSortMenuOpen(false);
+                    }}
+                  >
+                    Alphabetical
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1429,7 +1523,7 @@ export default function Upload() {
                           }}
                         >
                           <span className="uploaded-table-name">{table.name}</span>{" "}
-                          <span className="small">
+                          <span className="small uploaded-table-meta">
                             ({table.row_count} rows, {table.column_count} cols)
                           </span>
                         </button>

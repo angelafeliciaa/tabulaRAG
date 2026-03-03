@@ -384,7 +384,7 @@ export default function TableView() {
               className="table-view-search"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search this page"
+              placeholder="Search for values"
               aria-label="Search rows"
             />
             <Link className="table-view-back-link" to="/">
