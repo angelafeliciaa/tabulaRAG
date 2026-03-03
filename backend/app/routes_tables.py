@@ -8,6 +8,8 @@ from app.db import SessionLocal
 from app.index_jobs import clear_index_job, get_index_jobs
 from app.models import Dataset, DatasetColumn, DatasetRow
 from app.qdrant_client import delete_collection, get_collection_point_count
+from app.typed_values import strip_internal_fields
+from app.name_guard import normalize_dataset_name_or_raise
 
 router = APIRouter()
 
@@ -18,14 +20,14 @@ class RenameRequest(BaseModel):
 
 def _normalize_row_data(raw: Any) -> Dict[str, Any]:
     if isinstance(raw, dict):
-        return raw
+        return strip_internal_fields(raw)
     if isinstance(raw, str):
         try:
             parsed: Any = json.loads(raw)
             if isinstance(parsed, str):
                 parsed = json.loads(parsed)
             if isinstance(parsed, dict):
-                return parsed
+                return strip_internal_fields(parsed)
         except Exception:
             return {}
     return {}
@@ -39,7 +41,11 @@ def _delete_collection_safe(dataset_id: int) -> None:
         pass
 
 
-@router.get("/tables")
+@router.get(
+    "/tables",
+    summary="List all datasets",
+    description="Returns all available datasets with their IDs, names, and metadata. Always call this first to discover valid dataset IDs.",
+)
 def list_tables():
     with SessionLocal() as db:
         datasets = (
@@ -56,6 +62,92 @@ def list_tables():
             }
             for d in datasets
         ]
+
+
+@router.get(
+    "/tables/{dataset_id}/columns",
+    summary="List all columns for a dataset",
+    description="Returns column names and indexes for a dataset. Always call this to understand the data structure and actual column names before querying.",
+)
+def get_cols_for_dataset(dataset_id: int):
+    with SessionLocal() as db:
+        dataset = db.execute(
+            select(Dataset).where(Dataset.id == dataset_id)
+        ).scalar_one_or_none()
+        if dataset is None:
+            raise HTTPException(status_code=404, detail="Dataset not found.")
+
+        columns = (
+            db.execute(
+                select(DatasetColumn)
+                .where(DatasetColumn.dataset_id == dataset_id)
+                .order_by(DatasetColumn.column_index)
+            )
+            .scalars()
+            .all()
+        )
+
+    return {
+        "dataset_id": dataset_id,
+        "columns": [{"column_index": c.column_index, "name": c.name} for c in columns],
+    }
+
+
+@router.get(
+    "/tables/{dataset_id}/slice",
+    summary="Browse raw rows from a dataset",
+    description="Returns rows in order by row index. Use this when the user wants to see or explore raw data, not for analytical questions like sums or rankings.",
+)
+def get_table_slice(
+    dataset_id: int,
+    offset: int = Query(
+        default=0,
+        description="Number of rows to skip. Use 0 to start from the beginning.",
+    ),
+    limit: int = Query(
+        default=30, description="Number of rows to return. Default is 30."
+    ),
+):
+    with SessionLocal() as db:
+        dataset = db.get(Dataset, dataset_id)
+        if not dataset:
+            raise HTTPException(status_code=404, detail="Table not found")
+
+        rows = (
+            db.execute(
+                select(DatasetRow)
+                .where(DatasetRow.dataset_id == dataset_id)
+                .order_by(DatasetRow.row_index)
+                .offset(offset)
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+
+        columns = (
+            db.execute(
+                select(DatasetColumn.name)
+                .where(DatasetColumn.dataset_id == dataset_id)
+                .order_by(DatasetColumn.column_index)
+            )
+            .scalars()
+            .all()
+        )
+
+        return {
+            "dataset_id": dataset_id,
+            "offset": offset,
+            "limit": limit,
+            "row_count": dataset.row_count,
+            "column_count": dataset.column_count,
+            "has_header": dataset.has_header,
+            "rows": [
+                {"row_index": r.row_index, "data": _normalize_row_data(r.row_data)}
+                for r in rows
+            ],
+            "columns": columns,
+        }
 
 
 @router.get("/tables/index-status", include_in_schema=False)
@@ -126,63 +218,10 @@ def list_index_status(dataset_id: Optional[List[int]] = Query(default=None)):
     return response
 
 
-@router.get(
-    "/tables/{dataset_id}/slice",
-    include_in_schema=False,
-)
-def get_table_slice(
-    dataset_id: int,
-    offset: int = 0,
-    limit: int = 30,
-):
-    with SessionLocal() as db:
-        dataset = db.get(Dataset, dataset_id)
-        if not dataset:
-            raise HTTPException(status_code=404, detail="Table not found")
-
-        rows = (
-            db.execute(
-                select(DatasetRow)
-                .where(DatasetRow.dataset_id == dataset_id)
-                .order_by(DatasetRow.row_index)
-                .offset(offset)
-                .limit(limit)
-            )
-            .scalars()
-            .all()
-        )
-
-        columns = (
-            db.execute(
-                select(DatasetColumn.name)
-                .where(DatasetColumn.dataset_id == dataset_id)
-                .order_by(DatasetColumn.column_index)
-            )
-            .scalars()
-            .all()
-        )
-
-        return {
-            "dataset_id": dataset_id,
-            "offset": offset,
-            "limit": limit,
-            "row_count": dataset.row_count,
-            "column_count": dataset.column_count,
-            "has_header": dataset.has_header,
-            "rows": [
-                {"row_index": r.row_index, "data": _normalize_row_data(r.row_data)}
-                for r in rows
-            ],
-            "columns": columns,
-        }
-
-
 @router.delete("/tables/{dataset_id}", include_in_schema=False)
 def delete_table(dataset_id: int, background_tasks: BackgroundTasks):
     with SessionLocal() as db:
-        exists = db.execute(
-            select(Dataset.id).where(Dataset.id == dataset_id)
-        ).first()
+        exists = db.execute(select(Dataset.id).where(Dataset.id == dataset_id)).first()
         if not exists:
             raise HTTPException(status_code=404, detail="Table not found")
         # Use direct SQL deletes to avoid expensive ORM cascade object loading.
@@ -201,8 +240,6 @@ def rename_table(dataset_id: int, body: RenameRequest):
         dataset = db.get(Dataset, dataset_id)
         if not dataset:
             raise HTTPException(status_code=404, detail="Table not found")
-        if not body.name.strip():
-            raise HTTPException(status_code=400, detail="Name cannot be empty")
-        dataset.name = body.name.strip()
+        dataset.name = normalize_dataset_name_or_raise(body.name)
         db.commit()
         return {"name": dataset.name}

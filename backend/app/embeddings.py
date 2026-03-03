@@ -2,6 +2,7 @@ import os
 from typing import Dict, List, Optional
 
 from fastembed import TextEmbedding
+from app.typed_values import is_internal_key
 
 _model: Optional[TextEmbedding] = None
 
@@ -45,6 +46,8 @@ def row_to_text(row_data: Dict[str, object]) -> str:
     """
     parts = []
     for key, value in row_data.items():
+        if is_internal_key(str(key)):
+            continue
         if value is None or value == "":
             continue
         parts.append(f"{key}: {value}")

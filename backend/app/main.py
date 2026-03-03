@@ -4,7 +4,6 @@ import json
 import logging
 import os
 from typing import Iterable, List, Tuple
-import unicodedata
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,10 +20,12 @@ from app.index_jobs import (
 from app.indexing import index_dataset
 from app.index_worker import IndexWorker
 from app.models import Base, Dataset, DatasetColumn, DatasetRow
-from app.mcp_server import mcp
 from app.qdrant_client import get_collection_point_count
+from fastapi_mcp import FastApiMCP
 from app.routes_tables import router as tables_router
 from app.routes_query import router as query_router
+from app.typed_values import normalize_row_obj
+from app.name_guard import normalize_dataset_name_or_raise
 
 
 logger = logging.getLogger(__name__)
@@ -49,12 +50,7 @@ async def lifespan(app: FastAPI):
     _index_worker.start()
     _resume_incomplete_index_jobs()
 
-    async with mcp.session_manager.run():
-        try:
-            yield
-        finally:
-            if _index_worker is not None:
-                _index_worker.stop()
+    yield
 
 
 app = FastAPI(title="TabulaRAG API", lifespan=lifespan)
@@ -70,15 +66,14 @@ app.add_middleware(
 
 app.include_router(tables_router)
 app.include_router(query_router)
-app.mount("/mcp", mcp.streamable_http_app())
 
 
-@app.get("/health")
+@app.get("/health", include_in_schema=False)
 def health():
     return {"status": "ok"}
 
 
-@app.get("/health/deps")
+@app.get("/health/deps", include_in_schema=False)
 def health_deps():
     postgres_ok = False
     qdrant_ok = False
@@ -103,11 +98,6 @@ def health_deps():
         "postgres": "ok" if postgres_ok else "down",
         "qdrant": "ok" if qdrant_ok else "down",
     }
-
-
-@app.get("/mcp-status")
-def mcp_status():
-    return {"status": "ok", "endpoint": "/mcp"}
 
 
 # checks if file is a csv or tsv based on file extension, raises HTTPException if not
@@ -136,37 +126,7 @@ def _normalize_headers(headers: List[str]) -> List[str]:
     return normalized
 
 
-NULL_VALUES = {"null", "none", "na", "n/a", "nan", "-", ""}
 ROW_INSERT_BATCH_SIZE = int(os.getenv("ROW_INSERT_BATCH_SIZE", "20000"))
-MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "100"))
-MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
-
-
-def _normalize_value(value: str) -> str | None:
-    if value is None:
-        return None
-    value = unicodedata.normalize("NFC", value)
-    value = value.replace("\xa0", " ")
-    value = " ".join(value.split())  # collapse extra whitespace
-    if value.lower() in NULL_VALUES:
-        return None
-    return value
-
-
-def validate_upload_size(upload: UploadFile) -> None:
-    try:
-        upload.file.seek(0, os.SEEK_END)
-        size_bytes = upload.file.tell()
-        upload.file.seek(0)
-    except Exception:
-        # Fallback to best effort if stream size is unavailable.
-        return
-
-    if size_bytes > MAX_UPLOAD_SIZE_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File size exceeds {MAX_UPLOAD_SIZE_MB} MB limit.",
-        )
 
 
 def _detect_delimiter(filename: str | None) -> str:
@@ -213,10 +173,7 @@ def _iter_rows(
 
 
 def _build_row_obj(headers: List[str], row: List[str]) -> dict:
-    return {
-        headers[i]: _normalize_value(row[i] if i < len(row) else None)
-        for i in range(len(headers))
-    }
+    return normalize_row_obj(headers, row)
 
 
 def _insert_rows_postgres_copy(
@@ -334,7 +291,7 @@ def _resume_incomplete_index_jobs() -> None:
         _index_worker.enqueue(dataset_id, row_count)
 
 
-@app.post("/ingest")
+@app.post("/ingest", include_in_schema=False)
 def ingest_table(
     file: UploadFile = File(...),
     dataset_name: str | None = Form(None),
@@ -343,11 +300,12 @@ def ingest_table(
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename.")
     validate_filename(file.filename)
-    validate_upload_size(file)
 
     headers, rows_iter, detected_delimiter = _iter_rows(file, has_header)
 
-    dataset_display_name = dataset_name or os.path.splitext(file.filename)[0]
+    dataset_display_name = normalize_dataset_name_or_raise(
+        dataset_name or os.path.splitext(file.filename)[0]
+    )
 
     with SessionLocal() as db:
         dataset = Dataset(
@@ -406,3 +364,11 @@ def ingest_table(
         "delimiter": dataset_delimiter,
         "has_header": dataset_has_header,
     }
+
+
+
+mcp = FastApiMCP(
+    app,
+    name="TabulaRAG",
+)
+mcp.mount_http()
