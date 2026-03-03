@@ -570,85 +570,95 @@ export default function Upload() {
     const occupiedNameKeys = new Set(
       tables.map((table) => getNameKey(stripSupportedFileExtension(table.name) || "table")),
     );
-
-    for (let i = 0; i < queuedItems.length; i += 1) {
-      const item = queuedItems[i];
+    const preparedItems = queuedItems.map((item) => {
       const preferredName =
         sanitizeTableNameInput(item.name)
         || sanitizeTableNameInput(item.file.name)
         || "table";
-      const normalizedName = claimUniqueTableName(preferredName, occupiedNameKeys);
+      return {
+        item,
+        normalizedName: claimUniqueTableName(preferredName, occupiedNameKeys),
+      };
+    });
+    let completedCount = 0;
+    setStatus(`Uploading ${queuedItems.length} file${queuedItems.length === 1 ? "" : "s"}...`);
+    window.sessionStorage.setItem(
+      PENDING_UPLOAD_SESSION_KEY,
+      JSON.stringify({
+        file_name:
+          queuedItems.length === 1 ? queuedItems[0].file.name : `${queuedItems.length} files`,
+        started_at: new Date().toISOString(),
+      }),
+    );
 
-      setStatus(`Uploading ${i + 1} of ${queuedItems.length}: ${item.file.name}`);
-      setUploadQueue((previous) =>
-        previous.map((current) =>
-          current.id === item.id
-            ? {
-              ...current,
-              name: normalizedName,
-              phase: "uploading",
-              progress: 2,
-              error: null,
-            }
-            : current,
-        ),
-      );
-
-      window.sessionStorage.setItem(
-        PENDING_UPLOAD_SESSION_KEY,
-        JSON.stringify({
-          file_name: item.file.name,
-          dataset_name: normalizedName,
-          started_at: new Date().toISOString(),
-        }),
-      );
-
-      try {
-        const result = await uploadTable(item.file, normalizedName, (progress) => {
-          setUploadQueue((previous) =>
-            previous.map((current) =>
-              current.id === item.id
-                ? {
-                  ...current,
-                  phase: progress.phase,
-                  progress: Math.max(current.progress, progress.percent),
-                }
-                : current,
-            ),
-          );
-        });
-
-        successCount += 1;
-        lastUploadedDatasetId = result.dataset_id;
+    await Promise.allSettled(
+      preparedItems.map(async ({ item, normalizedName }) => {
         setUploadQueue((previous) =>
           previous.map((current) =>
             current.id === item.id
               ? {
                 ...current,
-                phase: "success",
-                progress: 100,
+                name: normalizedName,
+                phase: "uploading",
+                progress: 2,
                 error: null,
               }
               : current,
           ),
         );
-      } catch (error: unknown) {
-        failureCount += 1;
-        const message = getErrorMessage(error);
-        if (!firstFailureMessage) {
-          firstFailureMessage = message;
+
+        try {
+          const result = await uploadTable(item.file, normalizedName, (progress) => {
+            setUploadQueue((previous) =>
+              previous.map((current) =>
+                current.id === item.id
+                  ? {
+                    ...current,
+                    phase: progress.phase,
+                    progress: Math.max(current.progress, progress.percent),
+                  }
+                  : current,
+              ),
+            );
+          });
+
+          successCount += 1;
+          lastUploadedDatasetId = result.dataset_id;
+          setUploadQueue((previous) =>
+            previous.map((current) =>
+              current.id === item.id
+                ? {
+                  ...current,
+                  phase: "success",
+                  progress: 100,
+                  error: null,
+                }
+                : current,
+            ),
+          );
+        } catch (error: unknown) {
+          failureCount += 1;
+          const message = getErrorMessage(error);
+          if (!firstFailureMessage) {
+            firstFailureMessage = message;
+          }
+          setUploadQueue((previous) =>
+            previous.map((current) =>
+              current.id === item.id
+                ? { ...current, phase: "error", progress: 0, error: message }
+                : current,
+            ),
+          );
+        } finally {
+          completedCount += 1;
+          setStatus(
+            `Completed ${completedCount}/${queuedItems.length} file${queuedItems.length === 1 ? "" : "s"}...`,
+          );
         }
-        setUploadQueue((previous) =>
-          previous.map((current) =>
-            current.id === item.id
-              ? { ...current, phase: "error", progress: 0, error: message }
-              : current,
-          ),
-        );
-      } finally {
-        window.sessionStorage.removeItem(PENDING_UPLOAD_SESSION_KEY);
-      }
-    }
+      }),
+    );
+
+    window.sessionStorage.removeItem(PENDING_UPLOAD_SESSION_KEY);
 
     try {
       await refresh();

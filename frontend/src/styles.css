@@ -224,8 +224,11 @@ h3 {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  height: 460px;
   overflow: hidden;
+}
+
+.upload-panel:not(.has-queue) {
+  min-height: 180px;
 }
 
 .upload-queue-backdrop {
@@ -304,8 +307,7 @@ h3 {
 }
 
 .upload-panel:not(.has-queue) .upload-drop {
-  flex: 1 1 auto;
-  min-height: 0;
+  min-height: 150px;
 }
 
 .upload-icon {
@@ -1109,8 +1111,8 @@ ul {
 }
 
 .tables-scroll {
-  /* Keep about 2 rows visible; rest is scrollable. */
-  max-height: 88px;
+  /* Keep about 3 uploaded rows visible before scrolling. */
+  max-height: 124px;
   overflow: auto;
   padding: 6px 4px 2px 2px;
 }
@@ -1313,7 +1315,7 @@ ul {
 }
 
 .preview-scroll-indicator {
-  bottom: 22px;
+  bottom: 10px;
 }
 
 .uploaded-scroll-indicator {
@@ -1706,7 +1708,18 @@ ul {
 }
 
 .upload-preview .table-area {
-    max-height: 74vh;
+  height: clamp(280px, 48vh, 430px);
+  min-height: 0;
+  max-height: none;
+  overflow: hidden;
+}
+
+.upload-preview .table-card {
+  padding: 10px 12px 12px;
+}
+
+.upload-preview .table-scroll {
+  height: 100%;
 }
 
 .preview-header {
@@ -1759,7 +1772,7 @@ ul {
   font-size: 13px;
   line-height: 1;
   font-weight: 700;
-  text-transform: uppercase;
+  text-transform: none;
   letter-spacing: 0.07em;
   color: #5f6f89;
   max-width: 30ch;
