@@ -127,7 +127,7 @@ def _normalize_headers(headers: List[str]) -> Tuple[List[str], List[str]]:
 
     normalized = [normalize_column_name(h) for h in display]
     # Ensure normalized names are unique by appending _N for duplicates
-    norm_seen: dict[str, int] = {}
+    norm_seen: Dict[str, int] = {}
     unique_normalized = []
     for n in normalized:
         if n in norm_seen:

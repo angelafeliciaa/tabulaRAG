@@ -28,7 +28,7 @@ class DatasetColumn(Base):
     dataset_id = Column(Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
     column_index = Column(Integer, nullable=False)
     name = Column(String(255), nullable=False)
-    normalized_name = Column(String(255), nullable=False, default="")
+    normalized_name = Column(String(255), nullable=False)
 
     dataset = relationship("Dataset", back_populates="columns")
 

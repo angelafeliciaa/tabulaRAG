@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 INTERNAL_TYPED_KEY = "__typed__"
 INTERNAL_NORMALIZED_KEY = "__normalized__"
-NULL_VALUES = {"null", "none", "na", "n/a", "nan", "-", "", "—", "–", ".", "...", "missing", "unknown", "undefined"}
+NULL_VALUES = {"null", "none", "na", "n/a", "nan", "-", "", "—", "–", "missing", "unknown", "undefined"}
 
 _NUMBER_CLEAN_RE = re.compile(r"[$€£¥₹,\s]")
 _NUMBER_VALID_RE = re.compile(r"^[-+]?\d*\.?\d+$")
