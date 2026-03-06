@@ -385,6 +385,42 @@ def test_query_count_with_natural_language_filter(client):
     assert "Link: http://localhost:5173/highlight/" in data["final_response"]
 
 
+# ── POST /filter ──────────────────────────────────────────────────
+
+def test_filter_rows_success(client):
+    dataset_id = _ingest(client)
+
+    resp = client.post(
+        "/filter",
+        json={
+            "dataset_id": dataset_id,
+            "filters": [{"column": "city", "operator": "=", "value": "London"}],
+            "limit": 10,
+            "offset": 0,
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["dataset_id"] == dataset_id
+    assert data["row_count"] == 1
+    assert len(data["rowsResult"]) == 1
+    assert data["rowsResult"][0]["row_data"]["city"] == "London"
+    assert "/tables/" in data["url"]
+
+
+def test_filter_dataset_not_found(client):
+    resp = client.post(
+        "/filter",
+        json={
+            "dataset_id": 999999,
+            "filters": [{"column": "city", "operator": "=", "value": "London"}],
+        },
+    )
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"].lower()
+
+
 # ── GET /highlights/{highlight_id} ────────────────────────────────
 
 def test_highlight_found(client):

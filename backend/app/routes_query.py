@@ -153,6 +153,26 @@ class AggregateResponse(BaseModel):
     )
 
 
+class FilterRequest(BaseModel):
+    dataset_id: int = Field(
+        description="ID of the dataset to filter. Call GET /tables first to discover valid IDs."
+    )
+    filters: Optional[List[FilterCondition]] = None
+    limit: int = 50
+    offset: int = 0
+
+
+class FilterResponse(BaseModel):
+    dataset_id: int
+    rowsResult: List[Dict[str, Any]]
+    row_count: int
+    sql_query: str
+    url: Optional[str] = Field(
+        default=None,
+        description="Source URL for the filtered dataset.",
+    )
+
+
 class HighlightResponse(BaseModel):
     highlight_id: str
     dataset_id: int
@@ -388,6 +408,124 @@ def aggregate_dataset(body: AggregateRequest):
         metric_column=body.metric_column,
         group_by_column=body.group_by,
         rowsResult=rows,
+        sql_query=_render_sql(sql, params),
+        url=url,
+    )
+
+
+@router.post(
+    "/filter",
+    response_model=FilterResponse,
+    summary="Filter rows from a dataset",
+    description="Apply structured filters to a dataset and return matching rows.",
+)
+def filter_dataset(body: FilterRequest):
+    with SessionLocal() as db:
+        row = db.execute(
+            text("SELECT id FROM datasets WHERE id = :id"),
+            {"id": body.dataset_id},
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Dataset not found.")
+
+    cols_payload = get_cols_for_dataset(body.dataset_id)
+    valid_columns = {col["name"] for col in cols_payload["columns"]}
+    if not valid_columns:
+        raise HTTPException(status_code=400, detail="Dataset has no columns.")
+
+    limit = max(1, min(body.limit, 500))
+    offset = max(0, body.offset)
+    params: Dict[str, Any] = {
+        "dataset_id": body.dataset_id,
+        "limit": limit,
+        "offset": offset,
+    }
+
+    def col_expr(param_name: str) -> str:
+        return f"(row_data::jsonb ->> :{param_name})"
+
+    where_clauses = ["dataset_id = :dataset_id"]
+    if body.filters:
+        for i, f in enumerate(body.filters):
+            if f.column not in valid_columns:
+                raise HTTPException(400, detail=f"Invalid filter column: {f.column}")
+
+            kp = f"fcol_{i}"
+            vp = f"fval_{i}"
+            params[kp] = f.column
+            col = col_expr(kp)
+
+            if f.operator in ("IS NULL", "IS NOT NULL"):
+                where_clauses.append(f"{col} {f.operator}")
+            elif f.operator == "IN":
+                if not f.value:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Filter value is required for operator IN on column {f.column}.",
+                    )
+                values = [v.strip() for v in f.value.split(",") if v.strip()]
+                if not values:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Filter value is required for operator IN on column {f.column}.",
+                    )
+                in_params = {f"fval_{i}_{j}": v for j, v in enumerate(values)}
+                params.update(in_params)
+                placeholders = ", ".join(f":{k}" for k in in_params)
+                where_clauses.append(f"{col} IN ({placeholders})")
+            elif f.operator == "LIKE":
+                if f.value is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Filter value is required for operator LIKE on column {f.column}.",
+                    )
+                params[vp] = f.value
+                where_clauses.append(f"{col} LIKE :{vp}")
+            elif f.operator in (">", ">=", "<", "<="):
+                if f.value is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Filter value is required for operator {f.operator} on column {f.column}.",
+                    )
+                params[vp] = f.value
+                where_clauses.append(
+                    f"NULLIF(TRIM({col}), '')::double precision {f.operator} :{vp}::double precision"
+                )
+            else:
+                if f.value is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Filter value is required for operator {f.operator} on column {f.column}.",
+                    )
+                params[vp] = f.value
+                where_clauses.append(f"{col} {f.operator} :{vp}")
+
+    sql = """
+        SELECT row_index, row_data
+        FROM dataset_rows
+        WHERE {where_sql}
+        ORDER BY row_index ASC
+        LIMIT :limit
+        OFFSET :offset
+    """.format(where_sql=" AND ".join(where_clauses))
+
+    count_sql = """
+        SELECT COUNT(*)::bigint AS row_count
+        FROM dataset_rows
+        WHERE {where_sql}
+    """.format(where_sql=" AND ".join(where_clauses))
+
+    with SessionLocal() as db:
+        rows_raw = db.execute(text(sql), params).mappings().all()
+        row_count_raw = db.execute(text(count_sql), params).scalar_one()
+
+    rows = [dict(r) for r in rows_raw]
+    url = f"{PUBLIC_UI_BASE_URL}/tables/{body.dataset_id}" if row_count_raw else None
+
+    return FilterResponse(
+        dataset_id=body.dataset_id,
+        rowsResult=rows,
+        row_count=int(row_count_raw or 0),
         sql_query=_render_sql(sql, params),
         url=url,
     )
