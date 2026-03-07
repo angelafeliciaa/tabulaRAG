@@ -385,6 +385,130 @@ def test_query_count_with_natural_language_filter(client):
     assert "Link: http://localhost:5173/highlight/" in data["final_response"]
 
 
+# ── POST /filter ──────────────────────────────────────────────────
+
+def test_filter_rows_success(client):
+    dataset_id = _ingest(client)
+
+    resp = client.post(
+        "/filter",
+        json={
+            "dataset_id": dataset_id,
+            "filters": [{"column": "city", "operator": "=", "value": "London"}],
+            "limit": 10,
+            "offset": 0,
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["dataset_id"] == dataset_id
+    assert data["row_count"] == 1
+    assert len(data["rowsResult"]) == 1
+    assert data["rowsResult"][0]["row_data"]["city"] == "London"
+    assert data["url"].startswith("http://localhost:5173/tables/virtual?q=")
+
+
+def test_filter_between_numeric(client):
+    csv_content = (
+        b"name,number_of_rooms\n"
+        b"A,2\n"
+        b"B,3\n"
+        b"C,5\n"
+        b"D,7\n"
+    )
+    resp = client.post(
+        "/ingest",
+        files={"file": ("rooms.csv", csv_content, "text/csv")},
+    )
+    dataset_id = resp.json()["dataset_id"]
+
+    resp = client.post(
+        "/filter",
+        json={
+            "dataset_id": dataset_id,
+            "filters": [{"column": "number_of_rooms", "operator": "BETWEEN", "value": "3,6"}],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["row_count"] == 2
+    names = [row["row_data"]["name"] for row in data["rowsResult"]]
+    assert names == ["B", "C"]
+
+
+def test_filter_not_like(client):
+    csv_content = (
+        b"city\n"
+        b"Paris\n"
+        b"Tokyo\n"
+        b"Berlin\n"
+    )
+    resp = client.post(
+        "/ingest",
+        files={"file": ("cities.csv", csv_content, "text/csv")},
+    )
+    dataset_id = resp.json()["dataset_id"]
+
+    resp = client.post(
+        "/filter",
+        json={
+            "dataset_id": dataset_id,
+            "filters": [{"column": "city", "operator": "NOT LIKE", "value": "%is"}],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    cities = [row["row_data"]["city"] for row in data["rowsResult"]]
+    assert cities == ["Tokyo", "Berlin"]
+
+
+def test_filter_or_conditions(client):
+    csv_content = (
+        b"city,year_listed\n"
+        b"Paris,2010\n"
+        b"London,2014\n"
+        b"Rome,2008\n"
+    )
+    resp = client.post(
+        "/ingest",
+        files={"file": ("listings.csv", csv_content, "text/csv")},
+    )
+    dataset_id = resp.json()["dataset_id"]
+
+    resp = client.post(
+        "/filter",
+        json={
+            "dataset_id": dataset_id,
+            "filters": [
+                {"column": "city", "operator": "=", "value": "Paris"},
+                {
+                    "column": "year_listed",
+                    "operator": ">",
+                    "value": "2012",
+                    "logical_operator": "OR",
+                },
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    cities = [row["row_data"]["city"] for row in data["rowsResult"]]
+    assert cities == ["Paris", "London"]
+
+
+def test_filter_dataset_not_found(client):
+    resp = client.post(
+        "/filter",
+        json={
+            "dataset_id": 999999,
+            "filters": [{"column": "city", "operator": "=", "value": "London"}],
+        },
+    )
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"].lower()
+
+
 # ── GET /highlights/{highlight_id} ────────────────────────────────
 
 def test_highlight_found(client):

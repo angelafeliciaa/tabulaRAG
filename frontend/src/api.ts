@@ -324,3 +324,21 @@ export async function aggregate(params: unknown): Promise<AggregateResponse> {
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
+
+export type FilterResponse = {
+  dataset_id: number;
+  rowsResult: { row_index: number; row_data: Record<string, unknown> }[];
+  row_count: number;
+  sql_query: string;
+  url: string | null;
+};
+
+export async function filterRows(params: unknown): Promise<FilterResponse> {
+  const res = await fetch(`${API_BASE}/filter`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

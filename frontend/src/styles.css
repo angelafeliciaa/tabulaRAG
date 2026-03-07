@@ -870,6 +870,10 @@ h3 {
   overflow: hidden;
 }
 
+.virtual-results-page {
+  padding-top: 76px;
+}
+
 .table-area {
   flex: 1 1 auto;
   min-height: 0;
@@ -2058,6 +2062,21 @@ tr:hover td {
   font-size: 12px;
 }
 
+.result-title {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1.25;
+  letter-spacing: 0.2px;
+}
+
+.result-subtitle {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
 .error {
   color: var(--danger);
 }
@@ -2092,6 +2111,10 @@ tr:hover td {
 
   .page-stack {
     padding-top: 72px;
+  }
+
+  .virtual-results-page {
+    padding-top: 82px;
   }
 
   .list-row {
