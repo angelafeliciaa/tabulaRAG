@@ -10,10 +10,35 @@ from sqlalchemy import text
 from app.retrieval import get_highlight, hybrid_search, resolve_dataset_context, smart_query
 from app.routes_tables import list_tables,get_cols_for_dataset
 from app.db import SessionLocal
+from app.typed_values import strip_internal_fields
 
 router = APIRouter()
 
-FilterOperator = Literal["=", "!=", ">", ">=", "<", "<=", "LIKE", "IN", "IS NULL", "IS NOT NULL"]
+FilterOperator = Literal[
+    "=",
+    "!=",
+    ">",
+    ">=",
+    "<",
+    "<=",
+    "LIKE",
+    "NOT LIKE",
+    "IN",
+    "BETWEEN",
+    "IS NULL",
+    "IS NOT NULL",
+]
+
+
+def _strip_money(value: str) -> str:
+    """Strip currency symbols and thousands separators from a user-supplied value, keeping numeric characters."""
+    import re
+    return re.sub(r"[^0-9.\-]", "", value)
+
+
+def _numeric_sql_expr(col: str) -> str:
+    """SQL expression that casts a text column to double precision after stripping currency/formatting chars."""
+    return f"NULLIF(REGEXP_REPLACE(TRIM({col}), '[^0-9.\\-]', '', 'g'), '')::double precision"
 
 
 def _sql_literal(value: Any) -> str:
@@ -34,6 +59,116 @@ def _render_sql(sql_template: str, params: Dict[str, Any]) -> str:
     return "\n".join(line.rstrip() for line in rendered.strip().splitlines())
 
 
+def _build_where_clauses(
+    filters: Optional[List["FilterCondition"]],
+    valid_columns: set[str],
+    params: Dict[str, Any],
+) -> List[str]:
+    where_clauses = ["dataset_id = :dataset_id"]
+
+    def col_expr(param_name: str) -> str:
+        return f"(row_data::jsonb ->> :{param_name})"
+
+    def num_col_expr(param_name: str) -> str:
+        """Two-layer numeric expression: pre-parsed row_data_num first, then strip-and-cast fallback."""
+        from_num = f"NULLIF(TRIM((row_data_num::jsonb ->> :{param_name})), '')::double precision"
+        from_text = _numeric_sql_expr(col_expr(param_name))
+        return f"COALESCE({from_num}, {from_text})"
+
+    if not filters:
+        return where_clauses
+
+    filter_expressions: List[str] = []
+    filter_joiners: List[str] = []
+
+    for i, f in enumerate(filters):
+        if f.column not in valid_columns:
+            raise HTTPException(400, detail=f"Invalid filter column: {f.column}")
+
+        kp = f"fcol_{i}"
+        vp = f"fval_{i}"
+        params[kp] = f.column
+        col = col_expr(kp)
+        current_expr = ""
+
+        if f.operator in ("IS NULL", "IS NOT NULL"):
+            current_expr = f"{col} {f.operator}"
+        elif f.operator == "IN":
+            if not f.value:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Filter value is required for operator IN on column {f.column}.",
+                )
+            values = [v.strip() for v in f.value.split(",") if v.strip()]
+            if not values:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Filter value is required for operator IN on column {f.column}.",
+                )
+            in_params = {f"fval_{i}_{j}": v for j, v in enumerate(values)}
+            params.update(in_params)
+            placeholders = ", ".join(f":{k}" for k in in_params)
+            current_expr = f"{col} IN ({placeholders})"
+        elif f.operator == "BETWEEN":
+            if not f.value:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Filter value is required for operator BETWEEN on column {f.column}.",
+                )
+            if "," in f.value:
+                parts = [v.strip() for v in f.value.split(",", maxsplit=1)]
+            else:
+                parts = [v.strip() for v in f.value.split("AND", maxsplit=1)]
+
+            if len(parts) != 2 or not parts[0] or not parts[1]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"BETWEEN filter on column {f.column} must provide two bounds, "
+                        "for example '3,6' or '3 AND 6'."
+                    ),
+                )
+            low_key = f"fval_{i}_low"
+            high_key = f"fval_{i}_high"
+            params[low_key] = _strip_money(parts[0])
+            params[high_key] = _strip_money(parts[1])
+            current_expr = (
+                f"{num_col_expr(kp)} BETWEEN "
+                f"CAST(:{low_key} AS double precision) AND CAST(:{high_key} AS double precision)"
+            )
+        else:
+            if f.value is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Filter value is required for operator {f.operator} on column {f.column}.",
+                )
+
+            if f.operator in ("LIKE", "NOT LIKE"):
+                params[vp] = f.value
+                current_expr = f"{col} {f.operator} :{vp}"
+            elif f.operator in (">", ">=", "<", "<="):
+                params[vp] = _strip_money(f.value)
+                current_expr = (
+                    f"{num_col_expr(kp)} {f.operator} CAST(:{vp} AS double precision)"
+                )
+            else:
+                params[vp] = f.value
+                current_expr = f"{col} {f.operator} :{vp}"
+
+        filter_expressions.append(current_expr)
+        if i > 0:
+            filter_joiners.append(f.logical_operator.upper())
+
+    if filter_expressions:
+        combined = filter_expressions[0]
+        for i in range(1, len(filter_expressions)):
+            joiner = filter_joiners[i - 1]
+            combined = f"({combined} {joiner} {filter_expressions[i]})"
+        where_clauses.append(combined)
+
+    return where_clauses
+
+
 
 # ── Request / Response models ──────────────────────────────────────
 
@@ -42,6 +177,7 @@ class FilterCondition(BaseModel):
     column: str
     operator: FilterOperator
     value: Optional[str] = None  # None for IS NULL / IS NOT NULL
+    logical_operator: Literal["AND", "OR"] = "AND"
 
 
 class HighlightItem(BaseModel):
@@ -153,6 +289,26 @@ class AggregateResponse(BaseModel):
     )
 
 
+class FilterRequest(BaseModel):
+    dataset_id: int = Field(
+        description="ID of the dataset to filter. Call GET /tables first to discover valid IDs."
+    )
+    filters: Optional[List[FilterCondition]] = None
+    limit: int = 50
+    offset: int = 0
+
+
+class FilterResponse(BaseModel):
+    dataset_id: int
+    rowsResult: List[Dict[str, Any]]
+    row_count: int
+    sql_query: str
+    url: Optional[str] = Field(
+        default=None,
+        description="Source URL for the filtered dataset.",
+    )
+
+
 class HighlightResponse(BaseModel):
     highlight_id: str
     dataset_id: int
@@ -178,6 +334,18 @@ def build_virtual_table_url(body: AggregateRequest, rows: List[Dict[str, Any]]) 
         "filters": [f.dict() for f in body.filters] if body.filters else None,
         "highlight_index": highlight_index,
         "limit": 500,
+    }
+    encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    return f"{PUBLIC_UI_BASE_URL}/tables/virtual?q={encoded}"
+
+
+def build_filter_virtual_table_url(body: FilterRequest) -> str:
+    payload = {
+        "mode": "filter",
+        "dataset_id": body.dataset_id,
+        "filters": [f.dict() for f in body.filters] if body.filters else None,
+        "limit": 500,
+        "offset": 0,
     }
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
     return f"{PUBLIC_UI_BASE_URL}/tables/virtual?q={encoded}"
@@ -221,10 +389,10 @@ def _strict_lookup_error(status_code: int, message: str) -> HTTPException:
 # ── Endpoints ──────────────────────────────────────────────────────
 
 @router.post(
-    "/query",
+    "/semantic_query",
     response_model=QueryResponse,
-    summary="Answer natural-language table queries",
-    description="Primary analytics endpoint. Use this instead of row-slice tools for sums/counts/top-N and precise citations.",
+    summary="Answer natural-language semantic table queries",
+    description="Use this when you need to answer a question with a semantic search.",
 )
 def query_dataset(body: QueryRequest):
     if _enforce_list_tables_first() and body.dataset_id is None:
@@ -306,11 +474,7 @@ def aggregate_dataset(body: AggregateRequest):
     else:
         params["metric_column"] = body.metric_column
         numeric_from_num_json = f"NULLIF(TRIM((row_data_num::jsonb ->> :metric_column)), '')::double precision"
-        numeric_from_text_json = (
-            "NULLIF("
-            f"REGEXP_REPLACE(TRIM({col_expr('metric_column')}), '[^0-9.\\-]', '', 'g')"
-            ", '')::double precision"
-        )
+        numeric_from_text_json = _numeric_sql_expr(col_expr("metric_column"))
         numeric_expr = f"COALESCE({numeric_from_num_json}, {numeric_from_text_json})"
         metric_sql = f"{body.operation.upper()}({numeric_expr})::double precision AS aggregate_value"
 
@@ -328,38 +492,11 @@ def aggregate_dataset(body: AggregateRequest):
 
     select_parts.append(metric_sql)
 
-    where_clauses = ["dataset_id = :dataset_id"]
-    if body.filters:
-        for i, f in enumerate(body.filters):
-            if f.column not in valid_columns:
-                raise HTTPException(400, detail=f"Invalid filter column: {f.column}")
-    
-            kp = f"fcol_{i}"
-            vp = f"fval_{i}"
-            params[kp] = f.column
-            col = col_expr(kp)
-
-            if f.operator in ("IS NULL", "IS NOT NULL"):
-                where_clauses.append(f"{col} {f.operator}")
-            elif f.operator == "IN":
-                # expect value to be comma-separated
-                values = [v.strip() for v in f.value.split(",")]
-                in_params = {f"fval_{i}_{j}": v for j, v in enumerate(values)}
-                params.update(in_params)
-                placeholders = ", ".join(f":{k}" for k in in_params)
-                where_clauses.append(f"{col} IN ({placeholders})")
-            elif f.operator == "LIKE":
-                params[vp] = f.value
-                where_clauses.append(f"{col} LIKE :{vp}")
-            elif f.operator in (">", ">=", "<", "<="):
-                params[vp] = f.value
-                # cast to numeric for amount-style columns
-                where_clauses.append(
-                    f"NULLIF(TRIM({col}), '')::double precision {f.operator} :{vp}::double precision"
-                )
-            else:  # "=" and "!="
-                params[vp] = f.value
-                where_clauses.append(f"{col} {f.operator} :{vp}")
+    where_clauses = _build_where_clauses(
+        filters=body.filters,
+        valid_columns=valid_columns,
+        params=params,
+    )
 
     sql = f"""
         SELECT {", ".join(select_parts)}
@@ -388,6 +525,77 @@ def aggregate_dataset(body: AggregateRequest):
         metric_column=body.metric_column,
         group_by_column=body.group_by,
         rowsResult=rows,
+        sql_query=_render_sql(sql, params),
+        url=url,
+    )
+
+
+@router.post(
+    "/filter",
+    response_model=FilterResponse,
+    summary="Filter rows from a dataset",
+    description="Apply structured filters to a dataset and return matching rows.",
+)
+def filter_dataset(body: FilterRequest):
+    with SessionLocal() as db:
+        row = db.execute(
+            text("SELECT id FROM datasets WHERE id = :id"),
+            {"id": body.dataset_id},
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Dataset not found.")
+
+    cols_payload = get_cols_for_dataset(body.dataset_id)
+    valid_columns = {col["name"] for col in cols_payload["columns"]}
+    if not valid_columns:
+        raise HTTPException(status_code=400, detail="Dataset has no columns.")
+
+    limit = max(1, min(body.limit, 500))
+    offset = max(0, body.offset)
+    params: Dict[str, Any] = {
+        "dataset_id": body.dataset_id,
+        "limit": limit,
+        "offset": offset,
+    }
+
+    where_clauses = _build_where_clauses(
+        filters=body.filters,
+        valid_columns=valid_columns,
+        params=params,
+    )
+
+    sql = """
+        SELECT row_index, row_data
+        FROM dataset_rows
+        WHERE {where_sql}
+        ORDER BY row_index ASC
+        LIMIT :limit
+        OFFSET :offset
+    """.format(where_sql=" AND ".join(where_clauses))
+
+    count_sql = """
+        SELECT COUNT(*)::bigint AS row_count
+        FROM dataset_rows
+        WHERE {where_sql}
+    """.format(where_sql=" AND ".join(where_clauses))
+
+    with SessionLocal() as db:
+        rows_raw = db.execute(text(sql), params).mappings().all()
+        row_count_raw = db.execute(text(count_sql), params).scalar_one()
+
+    rows: List[Dict[str, Any]] = []
+    for r in rows_raw:
+        item = dict(r)
+        row_data = item.get("row_data")
+        if isinstance(row_data, dict):
+            item["row_data"] = strip_internal_fields(row_data)
+        rows.append(item)
+    url = build_filter_virtual_table_url(body) if row_count_raw else None
+
+    return FilterResponse(
+        dataset_id=body.dataset_id,
+        rowsResult=rows,
+        row_count=int(row_count_raw or 0),
         sql_query=_render_sql(sql, params),
         url=url,
     )
