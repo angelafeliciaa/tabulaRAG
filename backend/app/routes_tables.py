@@ -244,7 +244,11 @@ def update_table(dataset_id: int, body: UpdateTableRequest):
             raise HTTPException(status_code=404, detail="Table not found")
         if body.name is not None:
             dataset.name = normalize_dataset_name_or_raise(body.name)
-        if body.description is not None:
-            dataset.description = body.description.strip() if body.description.strip() else None
+        if "description" in body.model_fields_set:
+            if body.description is None:
+                dataset.description = None
+            else:
+                stripped = body.description.strip()
+                dataset.description = stripped if stripped else None
         db.commit()
         return {"name": dataset.name, "description": dataset.description}

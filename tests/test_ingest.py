@@ -210,6 +210,21 @@ def test_clear_description_via_patch(client):
     assert patch_resp.json()["description"] is None
 
 
+def test_clear_description_with_explicit_null(client):
+    resp = client.post(
+        "/ingest",
+        files=make_csv("a,b\n1,2\n"),
+        data={"dataset_name": "null_desc_test", "description": "To be cleared"},
+    )
+    dataset_id = resp.json()["dataset_id"]
+    patch_resp = client.patch(
+        f"/tables/{dataset_id}",
+        json={"description": None},
+    )
+    assert patch_resp.status_code == 200
+    assert patch_resp.json()["description"] is None
+
+
 def test_patch_name_only_preserves_description(client):
     resp = client.post(
         "/ingest",

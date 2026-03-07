@@ -33,10 +33,39 @@ _index_worker: IndexWorker | None = None
 INDEX_WORKER_CONCURRENCY = max(1, int(os.getenv("INDEX_WORKER_CONCURRENCY", "4")))
 
 
+def _migrate_add_description_column() -> None:
+    """Add ``description`` column to existing ``datasets`` table if missing."""
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='datasets'"
+            )).fetchone()
+            if result is not None:
+                if "description" not in (result[0] or "").lower():
+                    conn.execute(text(
+                        "ALTER TABLE datasets ADD COLUMN description TEXT"
+                    ))
+                    conn.commit()
+                return
+
+            try:
+                conn.execute(text(
+                    "SELECT description FROM datasets LIMIT 0"
+                ))
+            except Exception:
+                conn.execute(text(
+                    "ALTER TABLE datasets ADD COLUMN description TEXT"
+                ))
+                conn.commit()
+    except Exception:
+        logger.debug("Skipping description column migration", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _index_worker
     Base.metadata.create_all(bind=engine)
+    _migrate_add_description_column()
     try:
         from app.embeddings import get_model
         get_model()
