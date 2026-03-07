@@ -132,6 +132,7 @@ def test_ingest_with_description(client):
     assert response.status_code == 200
     body = response.json()
     assert body["name"] == "described_table"
+    assert body["description"] == "Sales data for Q1 2024"
 
 
 def test_ingest_without_description(client):
