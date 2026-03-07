@@ -150,9 +150,12 @@ def test_invalid_extension(client):
 
 # ── GET /tables filtering ────────────────────────────────────────────────────
 
+_PATCH_ENQUEUE = "app.main._enqueue_index_job"
+
+
 def test_list_tables_excludes_indexing_datasets(client):
     """GET /tables should not return datasets that are still being indexed."""
-    with patch("app.main._enqueue_index_job"):
+    with patch(_PATCH_ENQUEUE):
         response = client.post(
             "/ingest",
             files=make_csv("a,b\n1,2\n"),
@@ -171,7 +174,7 @@ def test_list_tables_includes_ready_datasets(client):
     """GET /tables should include datasets after indexing completes."""
     from app.index_jobs import mark_index_job_ready
 
-    with patch("app.main._enqueue_index_job"):
+    with patch(_PATCH_ENQUEUE):
         response = client.post(
             "/ingest",
             files=make_csv("a,b\n1,2\n"),
@@ -199,7 +202,7 @@ def test_list_tables_includes_error_datasets(client):
     """GET /tables should include datasets with indexing errors so users can manage them."""
     from app.index_jobs import mark_index_job_error
 
-    with patch("app.main._enqueue_index_job"):
+    with patch(_PATCH_ENQUEUE):
         response = client.post(
             "/ingest",
             files=make_csv("a,b\n1,2\n"),

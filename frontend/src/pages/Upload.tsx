@@ -526,7 +526,7 @@ export default function Upload() {
     return () => {
       window.clearInterval(timer);
     };
-  }, [pendingTables.length, refresh]);
+  }, [pendingTables, refresh]);
 
   useEffect(() => {
     const element = tablesScrollRef.current;
