@@ -7,7 +7,7 @@ from typing import Iterable, List, Tuple
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import insert, text, select, inspect
+from sqlalchemy import insert, text, select
 from contextlib import asynccontextmanager
 from app.db import SessionLocal, engine
 from app.index_jobs import (
@@ -37,7 +37,6 @@ INDEX_WORKER_CONCURRENCY = max(1, int(os.getenv("INDEX_WORKER_CONCURRENCY", "4")
 async def lifespan(app: FastAPI):
     global _index_worker
     Base.metadata.create_all(bind=engine)
-    _ensure_dataset_description_column()
     try:
         from app.embeddings import get_model
         get_model()
@@ -120,26 +119,6 @@ def _normalize_dataset_description(raw: str | None) -> str | None:
         return None
     # Keep descriptions lightweight for storage/indexing.
     return cleaned[:1024]
-
-
-def _ensure_dataset_description_column() -> None:
-    inspector = inspect(engine)
-    column_names = {col.get("name") for col in inspector.get_columns("datasets")}
-    if "description" in column_names:
-        return
-
-    try:
-        with engine.begin() as conn:
-            if engine.dialect.name == "postgresql":
-                conn.execute(
-                    text(
-                        "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS description VARCHAR(1024)"
-                    )
-                )
-            else:
-                conn.execute(text("ALTER TABLE datasets ADD COLUMN description VARCHAR(1024)"))
-    except Exception as exc:
-        logger.warning("Could not ensure description column exists: %s", exc)
 
 
 # normalizes header names by stripping whitespace, replacing empty names with col_{index}, and ensuring uniqueness by appending _{count} to duplicates
