@@ -1922,7 +1922,7 @@ def join_datasets(
         if len(joined_rows) >= limit:
             break
 
-    # Collect output column order
+    # Collect output column order (sample first rows to determine column set)
     output_columns: List[str] = []
     seen: Set[str] = set()
     for row in joined_rows[:50]:
