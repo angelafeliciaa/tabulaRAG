@@ -179,6 +179,7 @@ function smoothIndexStatus(
 export default function Upload() {
   const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
   const [tables, setTables] = useState<TableSummary[]>([]);
+  const [pendingTables, setPendingTables] = useState<TableSummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -228,6 +229,13 @@ export default function Upload() {
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const sortMenuRef = useRef<HTMLDivElement | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+
+  // Merge API tables with locally tracked pending (still-indexing) tables.
+  const allTables = useMemo(() => {
+    const apiIds = new Set(tables.map((t) => t.dataset_id));
+    const pending = pendingTables.filter((t) => !apiIds.has(t.dataset_id));
+    return [...tables, ...pending];
+  }, [tables, pendingTables]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -341,6 +349,10 @@ export default function Upload() {
   const refresh = useCallback(async () => {
     const nextTables = await listTables();
     setTables(nextTables);
+    // Remove from pending any tables that now appear in the API response
+    // (i.e., their indexing is complete and they are returned by GET /tables).
+    const apiIds = new Set(nextTables.map((t) => t.dataset_id));
+    setPendingTables((prev) => prev.filter((t) => !apiIds.has(t.dataset_id)));
     try {
       await refreshIndexStatuses(nextTables);
     } catch {
@@ -482,13 +494,13 @@ export default function Upload() {
   }, [deleteConfirmTable, deletingTableIds]);
 
   useEffect(() => {
-    if (tables.length === 0) {
+    if (allTables.length === 0) {
       setIndexStatusByTable({});
       return;
     }
 
     const timer = window.setInterval(() => {
-      refreshIndexStatuses(tables).catch(() => {
+      refreshIndexStatuses(allTables).catch(() => {
         // Keep polling best-effort.
       });
     }, 1400);
@@ -496,7 +508,25 @@ export default function Upload() {
     return () => {
       window.clearInterval(timer);
     };
-  }, [tables, refreshIndexStatuses]);
+  }, [allTables, refreshIndexStatuses]);
+
+  // While there are pending (still-indexing) tables, periodically refresh the
+  // tables list so they transition into the main list once indexing completes.
+  useEffect(() => {
+    if (pendingTables.length === 0) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      refresh().catch(() => {
+        // best-effort
+      });
+    }, 3000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [pendingTables.length, refresh]);
 
   useEffect(() => {
     const element = tablesScrollRef.current;
@@ -521,7 +551,7 @@ export default function Upload() {
       element.removeEventListener("scroll", updateHint);
       window.removeEventListener("resize", updateHint);
     };
-  }, [tables.length, tableSearchQuery]);
+  }, [allTables.length, tableSearchQuery]);
 
   useEffect(() => {
     const container = previewAreaRef.current;
@@ -598,7 +628,7 @@ export default function Upload() {
     let firstFailureMessage: string | null = null;
     let lastUploadedDatasetId: number | null = null;
     const occupiedNameKeys = new Set(
-      tables.map((table) => getNameKey(stripSupportedFileExtension(table.name) || "table")),
+      allTables.map((table) => getNameKey(stripSupportedFileExtension(table.name) || "table")),
     );
     const preparedItems = queuedItems.map((item) => {
       const preferredName =
@@ -654,6 +684,24 @@ export default function Upload() {
 
           successCount += 1;
           lastUploadedDatasetId = result.dataset_id;
+          // Track the dataset as pending until indexing completes and it
+          // appears in the GET /tables response.
+          setPendingTables((prev) => {
+            if (prev.some((t) => t.dataset_id === result.dataset_id)) {
+              return prev;
+            }
+            return [
+              ...prev,
+              {
+                dataset_id: result.dataset_id,
+                name: result.name,
+                source_filename: item.file.name,
+                row_count: result.rows,
+                column_count: result.columns,
+                created_at: new Date().toISOString(),
+              },
+            ];
+          });
           setUploadQueue((previous) =>
             previous.map((current) =>
               current.id === item.id
@@ -721,7 +769,7 @@ export default function Upload() {
     if (busy || deletingTableIds[datasetId]) {
       return;
     }
-    const table = tables.find((current) => current.dataset_id === datasetId);
+    const table = allTables.find((current) => current.dataset_id === datasetId);
     if (!table) {
       setDeleteConfirmTable(null);
       return;
@@ -734,6 +782,7 @@ export default function Upload() {
     try {
       await deleteTable(datasetId);
       setTables((previous) => previous.filter((current) => current.dataset_id !== datasetId));
+      setPendingTables((previous) => previous.filter((current) => current.dataset_id !== datasetId));
       setPinnedTableIds((previous) =>
         previous.filter((currentId) => currentId !== datasetId),
       );
@@ -747,6 +796,7 @@ export default function Upload() {
     } catch (error: unknown) {
       if (isTableNotFoundError(error)) {
         setTables((previous) => previous.filter((current) => current.dataset_id !== datasetId));
+        setPendingTables((previous) => previous.filter((current) => current.dataset_id !== datasetId));
         setPinnedTableIds((previous) =>
           previous.filter((currentId) => currentId !== datasetId),
         );
@@ -783,7 +833,7 @@ export default function Upload() {
     }
 
     const nextNameKey = getNameKey(nextName);
-    const hasDuplicateName = tables.some(
+    const hasDuplicateName = allTables.some(
       (table) =>
         table.dataset_id !== datasetId
         && getNameKey(stripSupportedFileExtension(table.name) || "table") === nextNameKey,
@@ -826,7 +876,7 @@ export default function Upload() {
       uploadQueue.map((item) => `${item.file.name}:${item.file.size}:${item.file.lastModified}`),
     );
     const occupiedNameKeys = new Set<string>([
-      ...tables.map((table) => getNameKey(stripSupportedFileExtension(table.name) || "table")),
+      ...allTables.map((table) => getNameKey(stripSupportedFileExtension(table.name) || "table")),
       ...uploadQueue.map((item) => getNameKey(stripSupportedFileExtension(item.name) || "table")),
     ]);
     const nextItems: UploadQueueItem[] = [];
@@ -913,7 +963,7 @@ export default function Upload() {
     }
     const candidateKey = getNameKey(normalizedCandidate);
 
-    const existsInTables = tables.some(
+    const existsInTables = allTables.some(
       (table) => getNameKey(stripSupportedFileExtension(table.name) || "table") === candidateKey,
     );
     if (existsInTables) {
@@ -993,7 +1043,7 @@ export default function Upload() {
   }, [busy, uploadQueue]);
   const activeTableName =
     activeTableId !== null
-      ? tables.find((table) => table.dataset_id === activeTableId)?.name || "Table"
+      ? allTables.find((table) => table.dataset_id === activeTableId)?.name || "Table"
       : null;
   const deleteConfirmBusy = deleteConfirmTable
     ? Boolean(deletingTableIds[deleteConfirmTable.dataset_id])
@@ -1026,7 +1076,7 @@ export default function Upload() {
       return bTime - aTime;
     };
 
-    const next = [...tables];
+    const next = [...allTables];
     next.sort((a, b) => {
       const aPinned = pinnedTableIdSet.has(a.dataset_id);
       const bPinned = pinnedTableIdSet.has(b.dataset_id);
@@ -1036,7 +1086,7 @@ export default function Upload() {
       return sortByMode(a, b);
     });
     return next;
-  }, [tables, pinnedTableIdSet, tableSortMode]);
+  }, [allTables, pinnedTableIdSet, tableSortMode]);
   const normalizedTableSearchQuery = tableSearchQuery.trim().toLowerCase();
   const filteredTables = useMemo(() => {
     if (!normalizedTableSearchQuery) {
