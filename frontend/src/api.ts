@@ -287,8 +287,15 @@ export async function uploadTable(
   });
 }
 
-export async function listTables(): Promise<TableSummary[]> {
-  const res = await authFetch(`${API_BASE}/tables`, { headers: authHeaders() });
+export async function listTables(options?: {
+  includePending?: boolean;
+}): Promise<TableSummary[]> {
+  const url = new URL(`${API_BASE}/tables`);
+  if (options?.includePending) {
+    url.searchParams.set("include_pending", "true");
+  }
+
+  const res = await authFetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) {
     throw new Error(await res.text());
   }

@@ -1,6 +1,7 @@
 import io
 import json
 import pytest
+from unittest.mock import patch
 from sqlalchemy import text
 
 
@@ -103,6 +104,7 @@ def test_db_dataset_record(client, test_engine):
     assert row is not None
     assert row.row_count == 2
     assert row.column_count == 2
+    assert bool(row.is_index_ready) is True
 
 
 def test_db_columns_stored(client, test_engine):
@@ -120,6 +122,39 @@ def test_db_rows_stored(client, test_engine):
     data = json.loads(rows[0].row_data)
     assert data["name"] == "Alice"
     assert data["age"] == "30"
+
+
+def test_list_tables_returns_ready_datasets_by_default(client):
+    client.post(
+        "/ingest",
+        files=make_csv("name,age\nAlice,30\n"),
+        data={"dataset_name": "ready_table"},
+    )
+
+    response = client.get("/tables")
+    assert response.status_code == 200
+    names = [item["name"] for item in response.json()]
+    assert "ready_table" in names
+
+
+def test_list_tables_hides_pending_datasets_unless_requested(client):
+    with patch("app.main._enqueue_index_job", return_value=None):
+        ingest_response = client.post(
+            "/ingest",
+            files=make_csv("name,age\nAlice,30\n"),
+            data={"dataset_name": "pending_table"},
+        )
+
+    assert ingest_response.status_code == 200
+    dataset_id = ingest_response.json()["dataset_id"]
+
+    ready_only = client.get("/tables")
+    assert ready_only.status_code == 200
+    assert all(item["dataset_id"] != dataset_id for item in ready_only.json())
+
+    include_pending = client.get("/tables?include_pending=true")
+    assert include_pending.status_code == 200
+    assert any(item["dataset_id"] == dataset_id for item in include_pending.json())
 
 
 # ── Error cases ───────────────────────────────────────────────────────────────
@@ -145,7 +180,6 @@ def test_invalid_extension(client):
     )
     assert response.status_code == 400
     assert ".csv or .tsv" in response.json()["detail"]
-
 
 def test_ingest_requires_auth():
     from fastapi.testclient import TestClient

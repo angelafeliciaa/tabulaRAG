@@ -126,7 +126,7 @@ export default function TableView() {
     setDateMenu(null);
 
     let mounted = true;
-    listTables()
+    listTables({ includePending: true })
       .then((tables: TableSummary[]) => {
         if (!mounted) {
           return;

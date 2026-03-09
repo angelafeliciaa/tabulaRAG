@@ -340,7 +340,7 @@ export default function Upload() {
   }, []);
 
   const refresh = useCallback(async () => {
-    const nextTables = await listTables();
+    const nextTables = await listTables({ includePending: true });
     setTables(nextTables);
     try {
       await refreshIndexStatuses(nextTables);

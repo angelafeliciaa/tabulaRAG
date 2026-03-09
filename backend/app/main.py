@@ -10,6 +10,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import insert, text, select
 from contextlib import asynccontextmanager
 from app.db import SessionLocal, engine
+from app.dataset_state import (
+    ensure_dataset_index_ready_column,
+    set_dataset_index_ready,
+)
 from app.index_jobs import (
     mark_index_job_error,
     mark_index_job_ready,
@@ -38,6 +42,7 @@ INDEX_WORKER_CONCURRENCY = max(1, int(os.getenv("INDEX_WORKER_CONCURRENCY", "4")
 async def lifespan(app: FastAPI):
     global _index_worker
     Base.metadata.create_all(bind=engine)
+    ensure_dataset_index_ready_column()
     try:
         from app.embeddings import get_model
         get_model()
@@ -250,9 +255,11 @@ def _index_dataset_safe(dataset_id: int, total_rows: int) -> None:
             ),
             expected_total_rows=total_rows,
         )
+        set_dataset_index_ready(dataset_id, True)
         mark_index_job_ready(dataset_id, total_rows)
     except Exception as exc:
         logger.exception("Indexing failed for dataset_id=%s", dataset_id)
+        set_dataset_index_ready(dataset_id, False)
         mark_index_job_error(dataset_id, total_rows, f"Indexing failed: {exc}")
 
 
@@ -269,15 +276,18 @@ def _resume_incomplete_index_jobs() -> None:
 
     with SessionLocal() as db:
         datasets = db.execute(
-            select(Dataset.id, Dataset.row_count)
-            .where(Dataset.row_count > 0)
-            .order_by(Dataset.id.asc())
+            select(Dataset.id, Dataset.row_count, Dataset.is_index_ready).order_by(
+                Dataset.id.asc()
+            )
         ).all()
 
-    for dataset_id_raw, row_count_raw in datasets:
+    for dataset_id_raw, row_count_raw, is_index_ready_raw in datasets:
         dataset_id = int(dataset_id_raw)
         row_count = int(row_count_raw or 0)
+        is_index_ready = bool(is_index_ready_raw)
         if row_count <= 0:
+            if not is_index_ready:
+                set_dataset_index_ready(dataset_id, True)
             continue
 
         try:
@@ -286,8 +296,14 @@ def _resume_incomplete_index_jobs() -> None:
             point_count = None
 
         if point_count is not None and int(point_count) >= row_count:
+            if not is_index_ready:
+                set_dataset_index_ready(dataset_id, True)
+            continue
+        if point_count is None and is_index_ready:
             continue
 
+        if is_index_ready:
+            set_dataset_index_ready(dataset_id, False)
         queue_index_job(dataset_id, row_count)
         _index_worker.enqueue(dataset_id, row_count)
 
@@ -345,6 +361,7 @@ def ingest_table(
             delimiter=detected_delimiter,
             has_header=has_header,
             column_count=len(headers),
+            is_index_ready=False,
         )
         db.add(
             dataset
@@ -383,9 +400,13 @@ def ingest_table(
         )
         db.commit()
 
-    # Start vector indexing after response so uploads don't block on embedding/Qdrant upserts.
-    queue_index_job(dataset_id, row_count)
-    _enqueue_index_job(dataset_id, row_count)
+    if row_count <= 0:
+        set_dataset_index_ready(dataset_id, True)
+        mark_index_job_ready(dataset_id, row_count)
+    else:
+        # Start vector indexing after response so uploads don't block on embedding/Qdrant upserts.
+        queue_index_job(dataset_id, row_count)
+        _enqueue_index_job(dataset_id, row_count)
 
     return {
         "dataset_id": dataset_id,
