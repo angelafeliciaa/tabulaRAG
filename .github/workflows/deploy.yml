@@ -10,8 +10,12 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
+      - name: Set lowercase repo
+        run: echo "REPO_LC=${REPO,,}" >> "$GITHUB_ENV"
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -22,10 +26,10 @@ jobs:
         with:
           context: ./backend
           push: true
-          tags: ghcr.io/${{ github.repository }}/backend:latest,ghcr.io/${{ github.repository }}/backend:${{ github.sha }}
+          tags: ghcr.io/${{ env.REPO_LC }}/backend:latest,ghcr.io/${{ env.REPO_LC }}/backend:${{ github.sha }}
       - name: Build and push frontend
         uses: docker/build-push-action@v6
         with:
           context: ./frontend
           push: true
-          tags: ghcr.io/${{ github.repository }}/frontend:latest,ghcr.io/${{ github.repository }}/frontend:${{ github.sha }}
+          tags: ghcr.io/${{ env.REPO_LC }}/frontend:latest,ghcr.io/${{ env.REPO_LC }}/frontend:${{ github.sha }}

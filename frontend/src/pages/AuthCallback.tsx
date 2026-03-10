@@ -10,14 +10,10 @@ export default function AuthCallback({ onLogin }: AuthCallbackProps) {
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get("code");
+  const code = new URLSearchParams(window.location.search).get("code");
 
-    if (!code) {
-      setError("No authorization code received from GitHub.");
-      return;
-    }
+  useEffect(() => {
+    if (!code) return;
 
     exchangeGithubCode(code)
       .then(() => {
@@ -27,7 +23,24 @@ export default function AuthCallback({ onLogin }: AuthCallbackProps) {
       .catch(() => {
         setError("GitHub authentication failed. Please try again.");
       });
-  }, [onLogin, navigate]);
+  }, [code, onLogin, navigate]);
+
+  if (!code) {
+    return (
+      <div className="login-page">
+        <div className="login-card">
+          <p className="login-error">No authorization code received from GitHub.</p>
+          <button
+            type="button"
+            className="login-btn"
+            onClick={() => navigate("/", { replace: true })}
+          >
+            Back to login
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (error) {
     return (

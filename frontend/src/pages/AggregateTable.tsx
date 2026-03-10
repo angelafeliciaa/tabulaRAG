@@ -70,8 +70,7 @@ export default function VirtualTableView() {
     const params = new URLSearchParams(location.search);
     const encoded = params.get("q");
     if (!encoded) {
-      setErr("This URL is not valid or no longer valid"); // eslint-disable-line react-hooks/set-state-in-effect
-      return;
+      setErr("This URL is not valid or no longer valid");      return;
     }
 
     let payload: AggregatePayload | FilterPayload;
@@ -79,8 +78,7 @@ export default function VirtualTableView() {
     try {
       payload = decodePayload(encoded);
     } catch {
-      setErr("This URL is not valid or no longer valid"); // eslint-disable-line react-hooks/set-state-in-effect
-      return;
+      setErr("This URL is not valid or no longer valid");      return;
     }
 
     if ("mode" in payload && payload.mode === "filter") {

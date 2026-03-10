@@ -52,7 +52,7 @@ export default function App() {
           path="/auth/callback"
           element={<AuthCallback onLogin={() => setAuthed(true)} />}
         />
-        <Route path="*" element={<Login onLogin={() => setAuthed(true)} />} />
+        <Route path="*" element={<Login />} />
       </Routes>
     );
   }

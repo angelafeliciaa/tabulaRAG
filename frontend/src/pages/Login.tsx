@@ -1,24 +1,10 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import logo from "../images/logo.png";
 import { getGithubClientId } from "../api";
 
-interface LoginProps {
-  onLogin: () => void;
-}
-
-export default function Login({ onLogin: _onLogin }: LoginProps) {
+export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    // Check if we're returning from GitHub OAuth callback
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get("code");
-    if (code) {
-      // The App component handles the callback via the /auth/callback route
-      return;
-    }
-  }, []);
 
   async function handleGithubLogin() {
     setLoading(true);

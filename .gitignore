@@ -1,5 +1,6 @@
 .env
 .claude/
+.omc/
 CLAUDE.md
 
 # macOS
