@@ -24,7 +24,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       QDRANT_URL: ${QDRANT_URL}
-      API_KEY: ${API_KEY:-tabularag-dev-key}
+      API_KEY: ${API_KEY:-}
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       JWT_SECRET: ${JWT_SECRET:-}

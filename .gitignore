@@ -1,5 +1,6 @@
 .env
 .claude/
+CLAUDE.md
 
 # macOS
 .DS_Store

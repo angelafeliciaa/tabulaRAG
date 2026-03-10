@@ -1,3 +1,4 @@
+import hmac
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -46,7 +47,7 @@ def require_auth(
 
     # Try API key first
     api_key = os.getenv("API_KEY", "").strip()
-    if api_key and token == api_key:
+    if api_key and hmac.compare_digest(token, api_key):
         return
 
     # Try JWT

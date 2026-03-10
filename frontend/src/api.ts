@@ -38,6 +38,21 @@ export function logout(): void {
   localStorage.removeItem(USER_KEY);
 }
 
+async function authFetch(
+  input: string | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const res = await fetch(
+    typeof input === "string" ? input : input.toString(),
+    init,
+  );
+  if (res.status === 401) {
+    logout();
+    window.location.replace("/");
+  }
+  return res;
+}
+
 export async function getGithubClientId(): Promise<string> {
   const res = await fetch(`${API_BASE}/auth/github`);
   if (!res.ok) throw new Error("GitHub OAuth not configured");
@@ -248,6 +263,12 @@ export async function uploadTable(
         return;
       }
 
+      if (xhr.status === 401) {
+        logout();
+        window.location.replace("/");
+        return;
+      }
+
       const detail = xhr.responseText?.trim();
       reject(new Error(detail || `Upload failed with status ${xhr.status}.`));
     };
@@ -267,7 +288,7 @@ export async function uploadTable(
 }
 
 export async function listTables(): Promise<TableSummary[]> {
-  const res = await fetch(`${API_BASE}/tables`, { headers: authHeaders() });
+  const res = await authFetch(`${API_BASE}/tables`, { headers: authHeaders() });
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -282,7 +303,7 @@ export async function listIndexStatus(
     url.searchParams.append("dataset_id", String(datasetId));
   });
 
-  const res = await fetch(url.toString(), { headers: authHeaders() });
+  const res = await authFetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -300,7 +321,7 @@ export async function getSlice(
   url.searchParams.set("offset", String(offset));
   url.searchParams.set("limit", String(limit));
 
-  const res = await fetch(url.toString(), { headers: authHeaders() });
+  const res = await authFetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -321,7 +342,7 @@ export async function getSlice(
 }
 
 export async function getHighlight(highlightId: string): Promise<HighlightResponse> {
-  const res = await fetch(`${API_BASE}/highlights/${highlightId}`, {
+  const res = await authFetch(`${API_BASE}/highlights/${highlightId}`, {
     headers: authHeaders(),
   });
   if (!res.ok) {
@@ -334,7 +355,7 @@ export async function deleteTable(
   datasetId: number,
   options?: { keepalive?: boolean },
 ): Promise<{ deleted: number }> {
-  const res = await fetch(`${API_BASE}/tables/${datasetId}`, {
+  const res = await authFetch(`${API_BASE}/tables/${datasetId}`, {
     method: "DELETE",
     keepalive: options?.keepalive,
     headers: authHeaders(),
@@ -349,7 +370,7 @@ export async function renameTable(
   datasetId: number,
   name: string,
 ): Promise<{ name: string }> {
-  const res = await fetch(`${API_BASE}/tables/${datasetId}`, {
+  const res = await authFetch(`${API_BASE}/tables/${datasetId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ name }),
@@ -387,7 +408,7 @@ export type AggregateResponse = {
 };
 
 export async function aggregate(params: unknown): Promise<AggregateResponse> {
-  const res = await fetch(`${API_BASE}/aggregate`, {
+  const res = await authFetch(`${API_BASE}/aggregate`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(params),
@@ -405,7 +426,7 @@ export type FilterResponse = {
 };
 
 export async function filterRows(params: unknown): Promise<FilterResponse> {
-  const res = await fetch(`${API_BASE}/filter`, {
+  const res = await authFetch(`${API_BASE}/filter`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(params),
