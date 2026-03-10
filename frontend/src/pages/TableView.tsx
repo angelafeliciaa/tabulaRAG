@@ -29,7 +29,7 @@ function parseDateToDate(value: unknown): Date | null {
   }
 
   const isoMatch = text.match(
-    /^(\d{4})[\/.-](\d{1,2})[\/.-](\d{1,2})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/,
+    /^(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/,
   );
   if (isoMatch) {
     const yyyy = isoMatch[1];
@@ -40,7 +40,7 @@ function parseDateToDate(value: unknown): Date | null {
   }
 
   const dmyOrMdy = text.match(
-    /^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/,
+    /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/,
   );
   if (dmyOrMdy) {
     const a = Number(dmyOrMdy[1]);

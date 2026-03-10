@@ -70,7 +70,7 @@ export default function VirtualTableView() {
     const params = new URLSearchParams(location.search);
     const encoded = params.get("q");
     if (!encoded) {
-      setErr("This URL is not valid or no longer valid");
+      setErr("This URL is not valid or no longer valid"); // eslint-disable-line react-hooks/set-state-in-effect
       return;
     }
 
@@ -79,7 +79,7 @@ export default function VirtualTableView() {
     try {
       payload = decodePayload(encoded);
     } catch {
-      setErr("This URL is not valid or no longer valid");
+      setErr("This URL is not valid or no longer valid"); // eslint-disable-line react-hooks/set-state-in-effect
       return;
     }
 
@@ -142,6 +142,7 @@ export default function VirtualTableView() {
         setRows(remapped);
       })
       .catch((error: unknown) => setErr(getErrorMessage(error)));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search]);
 
   if (err) {

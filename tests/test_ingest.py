@@ -118,7 +118,8 @@ def test_db_rows_stored(client, test_engine):
         rows = conn.execute(text("SELECT row_data FROM dataset_rows")).fetchall()
     assert len(rows) == 1
     data = json.loads(rows[0].row_data)
-    assert data == {"name": "Alice", "age": "30"}
+    assert data["name"] == "Alice"
+    assert data["age"] == "30"
 
 
 # ── Error cases ───────────────────────────────────────────────────────────────

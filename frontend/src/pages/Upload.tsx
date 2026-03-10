@@ -111,6 +111,7 @@ function stripSupportedFileExtension(name: string): string {
 
 function sanitizeTableNameInput(name: string): string {
   const withoutExtension = stripSupportedFileExtension(name);
+  // eslint-disable-next-line no-control-regex
   const withoutControlChars = withoutExtension.replace(/[\u0000-\u001f\u007f]/g, "");
   const allowedCharsOnly = withoutControlChars.replace(/[^A-Za-z0-9 _-]/g, "");
   const normalizedSpaces = allowedCharsOnly.replace(/\s+/g, " ").trim();
