@@ -71,7 +71,21 @@ export default function App() {
         <span>Server Connection: {serverStatus}</span>
       </div>
 
-      <div className="theme-toggle-wrap">
+      <div className="top-bar">
+        <div className="user-menu">
+          {user?.avatar_url && (
+            <img src={user.avatar_url} alt="" className="user-avatar" />
+          )}
+          <span className="user-name">{user?.name || user?.login}</span>
+          <button
+            className="logout-btn"
+            onClick={handleLogout}
+            type="button"
+          >
+            Sign out
+          </button>
+        </div>
+
         <button
           className="theme-toggle"
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -84,23 +98,6 @@ export default function App() {
               <img src={theme === "dark" ? moonIcon : sunIcon} alt="" />
             </span>
           </span>
-        </button>
-        <div className="toggle-label">
-          {theme === "dark" ? "Dark mode" : "Light mode"}
-        </div>
-      </div>
-
-      <div className="user-menu">
-        {user?.avatar_url && (
-          <img src={user.avatar_url} alt="" className="user-avatar" />
-        )}
-        <span className="user-name">{user?.name || user?.login}</span>
-        <button
-          className="logout-btn"
-          onClick={handleLogout}
-          type="button"
-        >
-          Sign out
         </button>
       </div>
 
