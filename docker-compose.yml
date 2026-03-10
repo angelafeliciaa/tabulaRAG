@@ -24,6 +24,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       QDRANT_URL: ${QDRANT_URL}
+      API_KEY: ${API_KEY:-tabularag-dev-key}
     ports:
       - "8000:8000"
     depends_on:

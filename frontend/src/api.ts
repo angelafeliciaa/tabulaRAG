@@ -1,5 +1,30 @@
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
+export function getApiKey(): string | null {
+  return localStorage.getItem("tabularag_api_key");
+}
+
+export function authHeaders(): Record<string, string> {
+  const key = getApiKey();
+  if (!key) return {};
+  return { Authorization: `Bearer ${key}` };
+}
+
+export function logout(): void {
+  localStorage.removeItem("tabularag_api_key");
+}
+
+export async function verifyApiKey(key: string): Promise<{ valid: boolean }> {
+  const res = await fetch(`${API_BASE}/auth/verify`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}` },
+  });
+  if (!res.ok) {
+    return { valid: false };
+  }
+  return (await res.json()) as { valid: boolean };
+}
+
 export type ServerStatus = "Online" | "Offline" | "Unknown";
 export type IndexJobState = "queued" | "indexing" | "ready" | "error";
 
@@ -133,6 +158,11 @@ export async function uploadTable(
 
     xhr.open("POST", `${API_BASE}/ingest`);
 
+    const key = getApiKey();
+    if (key) {
+      xhr.setRequestHeader("Authorization", `Bearer ${key}`);
+    }
+
     xhr.upload.onloadstart = () => {
       report(2, "uploading");
     };
@@ -199,7 +229,7 @@ export async function uploadTable(
 }
 
 export async function listTables(): Promise<TableSummary[]> {
-  const res = await fetch(`${API_BASE}/tables`);
+  const res = await fetch(`${API_BASE}/tables`, { headers: authHeaders() });
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -214,7 +244,7 @@ export async function listIndexStatus(
     url.searchParams.append("dataset_id", String(datasetId));
   });
 
-  const res = await fetch(url.toString());
+  const res = await fetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -232,7 +262,7 @@ export async function getSlice(
   url.searchParams.set("offset", String(offset));
   url.searchParams.set("limit", String(limit));
 
-  const res = await fetch(url.toString());
+  const res = await fetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -253,7 +283,9 @@ export async function getSlice(
 }
 
 export async function getHighlight(highlightId: string): Promise<HighlightResponse> {
-  const res = await fetch(`${API_BASE}/highlights/${highlightId}`);
+  const res = await fetch(`${API_BASE}/highlights/${highlightId}`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -267,6 +299,7 @@ export async function deleteTable(
   const res = await fetch(`${API_BASE}/tables/${datasetId}`, {
     method: "DELETE",
     keepalive: options?.keepalive,
+    headers: authHeaders(),
   });
   if (!res.ok) {
     throw new Error(await res.text());
@@ -280,7 +313,7 @@ export async function renameTable(
 ): Promise<{ name: string }> {
   const res = await fetch(`${API_BASE}/tables/${datasetId}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ name }),
   });
   if (!res.ok) {
@@ -318,7 +351,7 @@ export type AggregateResponse = {
 export async function aggregate(params: unknown): Promise<AggregateResponse> {
   const res = await fetch(`${API_BASE}/aggregate`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(params),
   });
   if (!res.ok) throw new Error(await res.text());
@@ -336,7 +369,7 @@ export type FilterResponse = {
 export async function filterRows(params: unknown): Promise<FilterResponse> {
   const res = await fetch(`${API_BASE}/filter`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(params),
   });
   if (!res.ok) throw new Error(await res.text());

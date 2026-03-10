@@ -144,3 +144,16 @@ def test_invalid_extension(client):
     )
     assert response.status_code == 400
     assert ".csv or .tsv" in response.json()["detail"]
+
+
+def test_ingest_requires_auth():
+    from fastapi.testclient import TestClient
+    import app.main as app_main
+
+    with TestClient(app_main.app) as unauthenticated:
+        response = unauthenticated.post(
+            "/ingest",
+            files={"file": ("data.csv", io.BytesIO(b"a,b\n1,2\n"), "text/csv")},
+        )
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid or missing API key"

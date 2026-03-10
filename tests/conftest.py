@@ -1,3 +1,4 @@
+import os
 import sys
 from unittest.mock import patch
 
@@ -9,6 +10,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
+
+os.environ.setdefault("API_KEY", "test-key")
 
 import app.db as app_db
 import app.main as app_main
@@ -37,7 +40,10 @@ def test_engine():
 
 @pytest.fixture(scope="session")
 def client(test_engine):
-    with TestClient(app_main.app) as c:
+    with TestClient(
+        app_main.app,
+        headers={"Authorization": f"Bearer {os.environ['API_KEY']}"},
+    ) as c:
         yield c
 
 

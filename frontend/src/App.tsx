@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Route, Routes } from "react-router-dom";
-import { getServerStatus, type ServerStatus } from "./api";
+import { getApiKey, logout, getServerStatus, type ServerStatus } from "./api";
 import moonIcon from "./images/moon.png";
 import sunIcon from "./images/sun.png";
 import HighlightView from "./pages/HighlightView";
 import TableView from "./pages/TableView";
 import Upload from "./pages/Upload";
 import AggregateTableView from "./pages/AggregateTable";
+import Login from "./pages/Login";
 
 export default function App() {
   const [theme, setTheme] = useState<"dark" | "light">(() => {
@@ -17,6 +18,9 @@ export default function App() {
     return "light";
   });
   const [serverStatus, setServerStatus] = useState<ServerStatus>("Unknown");
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(
+    () => getApiKey() !== null,
+  );
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -41,6 +45,19 @@ export default function App() {
       window.clearInterval(intervalId);
     };
   }, []);
+
+  if (!isAuthenticated) {
+    return (
+      <Login
+        onLogin={() => setIsAuthenticated(true)}
+      />
+    );
+  }
+
+  function handleLogout() {
+    logout();
+    setIsAuthenticated(false);
+  }
 
   return (
     <div className="app-shell">
@@ -67,6 +84,14 @@ export default function App() {
           {theme === "dark" ? "Dark mode" : "Light mode"}
         </div>
       </div>
+
+      <button
+        className="logout-btn"
+        onClick={handleLogout}
+        type="button"
+      >
+        Sign out
+      </button>
 
       <div className="content">
         <Routes>

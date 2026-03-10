@@ -5,7 +5,7 @@ import logging
 import os
 from typing import Iterable, List, Tuple
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import insert, text, select
 from contextlib import asynccontextmanager
@@ -26,6 +26,7 @@ from app.routes_tables import router as tables_router
 from app.routes_query import router as query_router
 from app.typed_values import normalize_row_obj
 from app.name_guard import normalize_dataset_name_or_raise
+from app.auth import require_api_key
 
 
 logger = logging.getLogger(__name__)
@@ -64,8 +65,8 @@ app.add_middleware(
 )
 
 
-app.include_router(tables_router)
-app.include_router(query_router)
+app.include_router(tables_router, dependencies=[Depends(require_api_key)])
+app.include_router(query_router, dependencies=[Depends(require_api_key)])
 
 
 @app.get("/health", include_in_schema=False)
@@ -291,11 +292,17 @@ def _resume_incomplete_index_jobs() -> None:
         _index_worker.enqueue(dataset_id, row_count)
 
 
+@app.post("/auth/verify")
+def auth_verify(credentials: None = Depends(require_api_key)) -> dict:
+    return {"valid": True}
+
+
 @app.post("/ingest", include_in_schema=False)
 def ingest_table(
     file: UploadFile = File(...),
     dataset_name: str | None = Form(None),
     has_header: bool = Form(True),
+    _auth: None = Depends(require_api_key),
 ):
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename.")
