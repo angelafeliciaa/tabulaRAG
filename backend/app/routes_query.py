@@ -409,12 +409,6 @@ def _strict_lookup_error(status_code: int, message: str) -> HTTPException:
 # ── Endpoints ──────────────────────────────────────────────────────
 
 @router.post(
-    "/query",
-    response_model=QueryResponse,
-    summary="Answer natural-language semantic table queries",
-    description="Backward-compatible alias for /semantic_query.",
-)
-@router.post(
     "/semantic_query",
     response_model=QueryResponse,
     summary="Answer natural-language semantic table queries",
