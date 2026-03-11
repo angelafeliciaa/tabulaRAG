@@ -1,6 +1,7 @@
 import os
 import base64
 import json
+import re
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -9,6 +10,7 @@ from sqlalchemy import text
 
 from app.retrieval import get_highlight, hybrid_search, resolve_dataset_context, smart_query
 from app.routes_tables import list_tables,get_cols_for_dataset
+import app.db as app_db
 from app.db import SessionLocal
 from app.typed_values import strip_internal_fields
 
@@ -32,13 +34,36 @@ FilterOperator = Literal[
 
 def _strip_money(value: str) -> str:
     """Strip currency symbols and thousands separators from a user-supplied value, keeping numeric characters."""
-    import re
     return re.sub(r"[^0-9.\-]", "", value)
+
+
+def _is_sqlite() -> bool:
+    return app_db.engine.dialect.name == "sqlite"
+
+
+def _column_json_text_expr(column_name: str) -> str:
+    escaped = column_name.replace("'", "''")
+    if _is_sqlite():
+        # SQLite JSON1 path to support arbitrary column names (including spaces).
+        json_key = column_name.replace("\\", "\\\\").replace('"', '\\"')
+        return f"json_extract(row_data, '$.\"{json_key}\"')"
+    return f"(row_data::jsonb ->> '{escaped}')"
 
 
 def _numeric_sql_expr(col: str) -> str:
     """SQL expression that casts a text column to double precision after stripping currency/formatting chars."""
+    if _is_sqlite():
+        cleaned = (
+            f"REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(TRIM({col}), '$', ''), ',', ''), '€', ''), '£', ''), '¥', '')"
+        )
+        return f"CAST(NULLIF({cleaned}, '') AS REAL)"
     return f"NULLIF(REGEXP_REPLACE(TRIM({col}), '[^0-9.\\-]', '', 'g'), '')::double precision"
+
+
+def _numeric_bind_expr(param_name: str) -> str:
+    if _is_sqlite():
+        return f"CAST(:{param_name} AS REAL)"
+    return f"CAST(:{param_name} AS double precision)"
 
 
 def _sql_literal(value: Any) -> str:
@@ -66,14 +91,11 @@ def _build_where_clauses(
 ) -> List[str]:
     where_clauses = ["dataset_id = :dataset_id"]
 
-    def col_expr(param_name: str) -> str:
-        return f"(row_data::jsonb ->> :{param_name})"
+    def col_expr(column_name: str) -> str:
+        return _column_json_text_expr(column_name)
 
-    def num_col_expr(param_name: str) -> str:
-        """Two-layer numeric expression: pre-parsed row_data_num first, then strip-and-cast fallback."""
-        from_num = f"NULLIF(TRIM((row_data_num::jsonb ->> :{param_name})), '')::double precision"
-        from_text = _numeric_sql_expr(col_expr(param_name))
-        return f"COALESCE({from_num}, {from_text})"
+    def num_col_expr(column_name: str) -> str:
+        return _numeric_sql_expr(col_expr(column_name))
 
     if not filters:
         return where_clauses
@@ -85,10 +107,8 @@ def _build_where_clauses(
         if f.column not in valid_columns:
             raise HTTPException(400, detail=f"Invalid filter column: {f.column}")
 
-        kp = f"fcol_{i}"
         vp = f"fval_{i}"
-        params[kp] = f.column
-        col = col_expr(kp)
+        col = col_expr(f.column)
         current_expr = ""
 
         if f.operator in ("IS NULL", "IS NOT NULL"):
@@ -133,8 +153,8 @@ def _build_where_clauses(
             params[low_key] = _strip_money(parts[0])
             params[high_key] = _strip_money(parts[1])
             current_expr = (
-                f"{num_col_expr(kp)} BETWEEN "
-                f"CAST(:{low_key} AS double precision) AND CAST(:{high_key} AS double precision)"
+                f"{num_col_expr(f.column)} BETWEEN "
+                f"{_numeric_bind_expr(low_key)} AND {_numeric_bind_expr(high_key)}"
             )
         else:
             if f.value is None:
@@ -149,7 +169,7 @@ def _build_where_clauses(
             elif f.operator in (">", ">=", "<", "<="):
                 params[vp] = _strip_money(f.value)
                 current_expr = (
-                    f"{num_col_expr(kp)} {f.operator} CAST(:{vp} AS double precision)"
+                    f"{num_col_expr(f.column)} {f.operator} {_numeric_bind_expr(vp)}"
                 )
             else:
                 params[vp] = f.value
@@ -389,6 +409,12 @@ def _strict_lookup_error(status_code: int, message: str) -> HTTPException:
 # ── Endpoints ──────────────────────────────────────────────────────
 
 @router.post(
+    "/query",
+    response_model=QueryResponse,
+    summary="Answer natural-language semantic table queries",
+    description="Backward-compatible alias for /semantic_query.",
+)
+@router.post(
     "/semantic_query",
     response_model=QueryResponse,
     summary="Answer natural-language semantic table queries",
@@ -466,27 +492,27 @@ def aggregate_dataset(body: AggregateRequest):
 
     params: Dict[str, Any] = {"dataset_id": body.dataset_id, "limit": limit}
 
-    def col_expr(param_name: str) -> str:
-        return f"(row_data::jsonb ->> :{param_name})"
+    def col_expr(column_name: str) -> str:
+        return _column_json_text_expr(column_name)
 
     if body.operation == "count":
-        metric_sql = "COUNT(*)::bigint AS aggregate_value"
+        metric_sql = "COUNT(*) AS aggregate_value"
     else:
-        params["metric_column"] = body.metric_column
-        numeric_from_num_json = f"NULLIF(TRIM((row_data_num::jsonb ->> :metric_column)), '')::double precision"
-        numeric_from_text_json = _numeric_sql_expr(col_expr("metric_column"))
-        numeric_expr = f"COALESCE({numeric_from_num_json}, {numeric_from_text_json})"
-        metric_sql = f"{body.operation.upper()}({numeric_expr})::double precision AS aggregate_value"
+        numeric_expr = _numeric_sql_expr(col_expr(body.metric_column or ""))
+        metric_sql = f"{body.operation.upper()}({numeric_expr}) AS aggregate_value"
 
     select_parts = []
     group_by_sql = ""
     order_by_sql = ""
     if body.group_by:
-        params["group_by"] = body.group_by
-        group_expr = col_expr("group_by")
+        group_expr = col_expr(body.group_by)
         select_parts.append(f"{group_expr} AS group_value")
         group_by_sql = f" GROUP BY {group_expr}"
-        order_by_sql = " ORDER BY aggregate_value DESC NULLS LAST"
+        order_by_sql = (
+            " ORDER BY aggregate_value DESC NULLS LAST"
+            if not _is_sqlite()
+            else " ORDER BY aggregate_value DESC"
+        )
     else:
         order_by_sql = ""
 
@@ -574,7 +600,7 @@ def filter_dataset(body: FilterRequest):
     """.format(where_sql=" AND ".join(where_clauses))
 
     count_sql = """
-        SELECT COUNT(*)::bigint AS row_count
+        SELECT COUNT(*) AS row_count
         FROM dataset_rows
         WHERE {where_sql}
     """.format(where_sql=" AND ".join(where_clauses))
@@ -589,6 +615,16 @@ def filter_dataset(body: FilterRequest):
         row_data = item.get("row_data")
         if isinstance(row_data, dict):
             item["row_data"] = strip_internal_fields(row_data)
+        elif isinstance(row_data, str):
+            try:
+                parsed = json.loads(row_data)
+                if isinstance(parsed, str):
+                    parsed = json.loads(parsed)
+                item["row_data"] = (
+                    strip_internal_fields(parsed) if isinstance(parsed, dict) else {}
+                )
+            except Exception:
+                item["row_data"] = {}
         rows.append(item)
     url = build_filter_virtual_table_url(body) if row_count_raw else None
 
