@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
 import { Route, Routes } from "react-router-dom";
-import { isAuthenticated, logout, getUser, getServerStatus, type ServerStatus } from "./api";
+import { logout, getUser, getServerStatus, type ServerStatus } from "./api";
 import moonIcon from "./images/moon.png";
 import sunIcon from "./images/sun.png";
 import HighlightView from "./pages/HighlightView";
 import TableView from "./pages/TableView";
 import Upload from "./pages/Upload";
 import AggregateTableView from "./pages/AggregateTable";
-import Login from "./pages/Login";
 import AuthCallback from "./pages/AuthCallback";
 
 export default function App() {
@@ -19,8 +18,6 @@ export default function App() {
     return "light";
   });
   const [serverStatus, setServerStatus] = useState<ServerStatus>("Unknown");
-  const [authed, setAuthed] = useState<boolean>(() => isAuthenticated());
-
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     window.localStorage.setItem("theme", theme);
@@ -45,23 +42,10 @@ export default function App() {
     };
   }, []);
 
-  if (!authed) {
-    return (
-      <Routes>
-        <Route
-          path="/auth/callback"
-          element={<AuthCallback onLogin={() => setAuthed(true)} />}
-        />
-        <Route path="*" element={<Login />} />
-      </Routes>
-    );
-  }
-
   const user = getUser();
 
   function handleLogout() {
     logout();
-    setAuthed(false);
   }
 
   return (
@@ -107,7 +91,7 @@ export default function App() {
           <Route path="/tables/virtual" element={<AggregateTableView />} />
           <Route path="/tables/:datasetId" element={<TableView />} />
           <Route path="/highlight/:highlightId" element={<HighlightView />} />
-          <Route path="/auth/callback" element={<AuthCallback onLogin={() => setAuthed(true)} />} />
+          <Route path="/auth/callback" element={<AuthCallback onLogin={() => {}} />} />
         </Routes>
       </div>
     </div>

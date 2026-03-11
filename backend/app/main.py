@@ -70,8 +70,8 @@ app.add_middleware(
 )
 
 
-app.include_router(tables_router, dependencies=[Depends(require_auth)])
-app.include_router(query_router, dependencies=[Depends(require_auth)])
+app.include_router(tables_router)
+app.include_router(query_router)
 
 
 @app.get("/health", include_in_schema=False)
@@ -342,7 +342,6 @@ def ingest_table(
     file: UploadFile = File(...),
     dataset_name: str | None = Form(None),
     has_header: bool = Form(True),
-    _auth: None = Depends(require_auth),
 ):
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename.")
