@@ -64,6 +64,7 @@ export default function App() {
           <button
             className="logout-btn"
             onClick={handleLogout}
+            hidden
             type="button"
           >
             Sign out
