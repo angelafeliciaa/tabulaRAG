@@ -50,7 +50,7 @@ def client(test_engine):
 @pytest.fixture(autouse=True)
 def mock_indexing():
     """Prevent Qdrant/embedding calls in all tests by default."""
-    with patch("app.main.index_dataset"):
+    with patch("app.main.index_dataset"), patch("app.main._index_worker", None):
         yield
 
 
