@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r backend/requirements.txt pytest
       - name: Run tests
-        run: pytest tests/ -v --ignore=tests/test_query.py
+        run: pytest tests/ -v
 
   frontend-lint-build:
     runs-on: ubuntu-latest
