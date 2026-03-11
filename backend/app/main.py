@@ -292,19 +292,19 @@ def _resume_incomplete_index_jobs() -> None:
         _index_worker.enqueue(dataset_id, row_count)
 
 
-@app.post("/auth/verify")
+@app.post("/auth/verify", include_in_schema=False)
 def auth_verify(credentials: None = Depends(require_auth)) -> dict:
     return {"valid": True}
 
 
-@app.get("/auth/github")
+@app.get("/auth/github", include_in_schema=False)
 def auth_github_redirect():
     if not GITHUB_CLIENT_ID:
         raise HTTPException(status_code=500, detail="GitHub OAuth not configured")
     return {"client_id": GITHUB_CLIENT_ID}
 
 
-@app.post("/auth/github/callback")
+@app.post("/auth/github/callback", include_in_schema=False)
 async def auth_github_callback(body: dict):
     code = body.get("code")
     if not code:
