@@ -717,6 +717,11 @@ export default function Upload() {
 
     const queuedItems = uploadQueue.filter((item) => item.phase === "idle" || item.phase === "error");
     if (queuedItems.length === 0) {
+      // If only successful items remain, let the primary action close the upload queue.
+      setUploadQueue([]);
+      setShowUploadQueue(false);
+      setErr(null);
+      setStatus(null);
       return;
     }
 
@@ -1130,9 +1135,8 @@ export default function Upload() {
     const droppedFiles = await collectDroppedFiles(event.dataTransfer);
     onSelectFiles(droppedFiles);
   }
-  const hasPendingUploads = uploadQueue.some(
-    (item) => item.phase === "idle" || item.phase === "error",
-  );
+  const hasOnlySuccessfulUploads =
+    uploadQueue.length > 0 && uploadQueue.every((item) => item.phase === "success");
   const isUploadQueueVisible = showUploadQueue || uploadQueue.length > 0;
   const isQueueInProgress = useMemo(() => {
     if (busy) {
@@ -1555,11 +1559,11 @@ export default function Upload() {
                   </button>
                   <button
                     onClick={onUpload}
-                    disabled={!hasPendingUploads || busy}
+                    disabled={busy}
                     className="primary"
                     type="button"
                   >
-                    {busy ? "Uploading..." : "Upload all files"}
+                    {busy ? "Uploading..." : hasOnlySuccessfulUploads ? "Done" : "Upload all files"}
                   </button>
                 </div>
               )}
