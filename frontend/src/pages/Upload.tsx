@@ -355,6 +355,7 @@ export default function Upload() {
   const previewAreaRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const emptyFileInputRef = useRef<HTMLInputElement | null>(null);
   const emptyFolderInputRef = useRef<HTMLInputElement | null>(null);
   const firstQueuedNameInputRef = useRef<HTMLInputElement | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
@@ -1342,7 +1343,7 @@ export default function Upload() {
         onDrop={onUploadDrop}
       >
         {!isUploadQueueVisible ? (
-          <label
+          <div
             className={`upload-drop ${isDragActive ? "drag-active" : ""}`}
             onDragEnter={onUploadDragEnter}
             onDragOver={onUploadDragOver}
@@ -1350,6 +1351,7 @@ export default function Upload() {
             onDrop={onUploadDrop}
           >
             <input
+              ref={emptyFileInputRef}
               type="file"
               multiple
               accept=".csv,.tsv"
@@ -1370,12 +1372,21 @@ export default function Upload() {
               }}
             />
             <div className="upload-icon-row">
-              <div className="upload-icon" aria-hidden="true">
-                <img src={uploadLogo} alt="" />
-              </div>
               <button
                 type="button"
-                className="upload-icon folder-trigger"
+                className="upload-icon icon-trigger"
+                aria-label="Select files"
+                title="Select files"
+                onClick={() => {
+                  emptyFileInputRef.current?.click();
+                }}
+                disabled={busy}
+              >
+                <img src={uploadLogo} alt="" />
+              </button>
+              <button
+                type="button"
+                className="upload-icon icon-trigger"
                 aria-label="Select folder"
                 title="Select folder"
                 onClick={(event) => {
@@ -1392,7 +1403,7 @@ export default function Upload() {
             </div>
             <div className="upload-title">Select or Drag &amp; Drop Your File(s) to Upload</div>
             <div className="upload-subtitle">Supported file formats: .csv, .tsv, folders</div>
-          </label>
+          </div>
         ) : (
           <>
             <h2>Upload CSV/TSV</h2>

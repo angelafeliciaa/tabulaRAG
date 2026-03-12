@@ -334,27 +334,28 @@ h3 {
   object-fit: contain;
 }
 
-.upload-icon.folder-trigger {
+.upload-icon.icon-trigger {
   cursor: pointer;
   transition:
     border-color 0.16s ease,
     background 0.16s ease;
+  padding: 0;
 }
 
-.upload-icon.folder-trigger svg {
+.upload-icon.icon-trigger svg {
   width: 24px;
   height: 24px;
   fill: currentColor;
 }
 
-.upload-icon.folder-trigger:hover,
-.upload-icon.folder-trigger:focus-visible {
+.upload-icon.icon-trigger:hover,
+.upload-icon.icon-trigger:focus-visible {
   border-color: rgba(79, 70, 229, 0.55);
   background: rgba(79, 70, 229, 0.08);
   outline: none;
 }
 
-.upload-icon.folder-trigger:disabled {
+.upload-icon.icon-trigger:disabled {
   opacity: 0.55;
   cursor: default;
 }
