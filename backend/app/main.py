@@ -183,7 +183,7 @@ def _validate_upload_content(upload: UploadFile) -> None:
     if b"\x00" in head:
         raise HTTPException(
             status_code=400,
-            detail="Uploaded file appears to be binary. Please upload a valid CSV/TSV text file.",
+            detail="Uploaded file appears to be binary. Please upload a valid CSV/TSV file.",
         )
 
     try:
