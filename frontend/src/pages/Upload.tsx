@@ -355,6 +355,7 @@ export default function Upload() {
   const previewAreaRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const emptyFolderInputRef = useRef<HTMLInputElement | null>(null);
   const firstQueuedNameInputRef = useRef<HTMLInputElement | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const sortMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1357,8 +1358,37 @@ export default function Upload() {
                 event.currentTarget.value = "";
               }}
             />
-            <div className="upload-icon" aria-hidden="true">
-              <img src={uploadLogo} alt="" />
+            <input
+              ref={emptyFolderInputRef}
+              {...FOLDER_INPUT_PROPS}
+              type="file"
+              multiple
+              accept=".csv,.tsv"
+              onChange={(event) => {
+                onSelectFiles(event.target.files);
+                event.currentTarget.value = "";
+              }}
+            />
+            <div className="upload-icon-row">
+              <div className="upload-icon" aria-hidden="true">
+                <img src={uploadLogo} alt="" />
+              </div>
+              <button
+                type="button"
+                className="upload-icon folder-trigger"
+                aria-label="Select folder"
+                title="Select folder"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  emptyFolderInputRef.current?.click();
+                }}
+                disabled={busy}
+              >
+                <svg viewBox="0 0 24 24" role="presentation" aria-hidden="true">
+                  <path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v1H3V6zm0 4h20v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8z" />
+                </svg>
+              </button>
             </div>
             <div className="upload-title">Select or Drag &amp; Drop Your File(s) to Upload</div>
             <div className="upload-subtitle">Supported file formats: .csv, .tsv, folders</div>

@@ -322,10 +322,41 @@ h3 {
   color: var(--text);
 }
 
+.upload-icon-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .upload-icon img {
   width: 24px;
   height: 24px;
   object-fit: contain;
+}
+
+.upload-icon.folder-trigger {
+  cursor: pointer;
+  transition:
+    border-color 0.16s ease,
+    background 0.16s ease;
+}
+
+.upload-icon.folder-trigger svg {
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
+}
+
+.upload-icon.folder-trigger:hover,
+.upload-icon.folder-trigger:focus-visible {
+  border-color: rgba(79, 70, 229, 0.55);
+  background: rgba(79, 70, 229, 0.08);
+  outline: none;
+}
+
+.upload-icon.folder-trigger:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 :root[data-theme="dark"] .upload-icon img {
