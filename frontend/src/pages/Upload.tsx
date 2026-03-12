@@ -179,6 +179,7 @@ function smoothIndexStatus(
 
 export default function Upload() {
   const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
+  const [showUploadQueue, setShowUploadQueue] = useState(false);
   const [tables, setTables] = useState<TableSummary[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -712,6 +713,7 @@ export default function Upload() {
     }
     if (failureCount === 0 && successCount === queuedItems.length) {
       setUploadQueue([]);
+      setShowUploadQueue(false);
     }
 
     setStatus(null);
@@ -893,6 +895,7 @@ export default function Upload() {
     const nextQueue = uploadQueue.filter((item) => item.id !== queueItemId);
     setUploadQueue(nextQueue);
     if (nextQueue.length === 0) {
+      setShowUploadQueue(false);
       setErr(null);
       setStatus(null);
     }
@@ -903,6 +906,7 @@ export default function Upload() {
       return;
     }
     setUploadQueue([]);
+    setShowUploadQueue(false);
     setErr(null);
     setStatus(null);
   }
@@ -951,13 +955,13 @@ export default function Upload() {
     );
   }
 
-  function onUploadDragEnter(event: React.DragEvent<HTMLLabelElement>) {
+  function onUploadDragEnter(event: React.DragEvent<HTMLElement>) {
     event.preventDefault();
     event.stopPropagation();
     setIsDragActive(true);
   }
 
-  function onUploadDragOver(event: React.DragEvent<HTMLLabelElement>) {
+  function onUploadDragOver(event: React.DragEvent<HTMLElement>) {
     event.preventDefault();
     event.stopPropagation();
     event.dataTransfer.dropEffect = "copy";
@@ -966,7 +970,7 @@ export default function Upload() {
     }
   }
 
-  function onUploadDragLeave(event: React.DragEvent<HTMLLabelElement>) {
+  function onUploadDragLeave(event: React.DragEvent<HTMLElement>) {
     event.preventDefault();
     event.stopPropagation();
     const relatedTarget = event.relatedTarget as Node | null;
@@ -975,15 +979,31 @@ export default function Upload() {
     }
   }
 
-  function onUploadDrop(event: React.DragEvent<HTMLLabelElement>) {
+  function onUploadDrop(event: React.DragEvent<HTMLElement>) {
     event.preventDefault();
     event.stopPropagation();
     setIsDragActive(false);
+    const transferTypes = Array.from(event.dataTransfer.types || []);
+    const hasFileTransferType = transferTypes.some((type) =>
+      type.toLowerCase().includes("file")
+    );
+    const hasDroppedFileItem = Array.from(event.dataTransfer.items || []).some(
+      (item) => item.kind === "file",
+    );
+    if (event.dataTransfer.files.length > 0 || hasDroppedFileItem || hasFileTransferType) {
+      setShowUploadQueue(true);
+    }
+    if (event.dataTransfer.files.length === 0 && (hasDroppedFileItem || hasFileTransferType)) {
+      setStatus(null);
+      setErr("Unsupported file type. Please upload a .csv or .tsv file.");
+      return;
+    }
     onSelectFiles(event.dataTransfer.files);
   }
   const hasPendingUploads = uploadQueue.some(
     (item) => item.phase === "idle" || item.phase === "error",
   );
+  const isUploadQueueVisible = showUploadQueue || uploadQueue.length > 0;
   const isQueueInProgress = useMemo(() => {
     if (busy) {
       return true;
@@ -1139,7 +1159,7 @@ export default function Upload() {
         </div>
       )}
 
-      {uploadQueue.length > 0 && <div className="upload-queue-backdrop" aria-hidden="true" />}
+      {isUploadQueueVisible && <div className="upload-queue-backdrop" aria-hidden="true" />}
 
       <div className="hero">
         <div className="hero-title-row">
@@ -1152,9 +1172,13 @@ export default function Upload() {
       </div>
 
       <div
-        className={`panel upload-panel${uploadQueue.length > 0 ? " has-queue in-modal" : ""}`}
+        className={`panel upload-panel${isUploadQueueVisible ? " has-queue in-modal" : ""}`}
+        onDragEnter={onUploadDragEnter}
+        onDragOver={onUploadDragOver}
+        onDragLeave={onUploadDragLeave}
+        onDrop={onUploadDrop}
       >
-        {uploadQueue.length === 0 ? (
+        {!isUploadQueueVisible ? (
           <label
             className={`upload-drop ${isDragActive ? "drag-active" : ""}`}
             onDragEnter={onUploadDragEnter}
