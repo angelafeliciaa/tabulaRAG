@@ -7,9 +7,9 @@ import {
   listTables,
   renameTable,
   type TableIndexStatus,
-  type UploadProgress,
   type TableSlice,
   type TableSummary,
+  type UploadProgress,
   uploadTable,
 } from "../api";
 import DataTable from "../components/DataTable";
@@ -64,6 +64,18 @@ function getErrorMessage(error: unknown): string {
 
 function isTableNotFoundError(error: unknown): boolean {
   return /table not found/i.test(getErrorMessage(error));
+}
+
+function isOfflineConnectionError(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  return (
+    normalized.includes("failed to fetch")
+    || normalized.includes("networkerror")
+    || normalized.includes("network error")
+    || normalized.includes("load failed")
+    || normalized.includes("network request failed")
+    || normalized.includes("err_network")
+  );
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -1019,6 +1031,15 @@ export default function Upload() {
   const deleteConfirmBusy = deleteConfirmTable
     ? Boolean(deletingTableIds[deleteConfirmTable.dataset_id])
     : false;
+  const showOfflineView = useMemo(() => {
+    if (tables.length > 0 || busy) {
+      return false;
+    }
+    if (typeof window !== "undefined" && window.navigator && window.navigator.onLine === false) {
+      return true;
+    }
+    return Boolean(err && isOfflineConnectionError(err));
+  }, [tables.length, busy, err]);
   const pinnedTableIdSet = useMemo(() => new Set(pinnedTableIds), [pinnedTableIds]);
   const sortedTables = useMemo(() => {
     const sortByMode = (a: TableSummary, b: TableSummary): number => {
@@ -1099,6 +1120,25 @@ export default function Upload() {
       return;
     }
     element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+  }
+
+  if (showOfflineView) {
+    return (
+      <div className="page page-stack">
+        <div className="hero">
+          <div className="hero-title-row">
+            <img src={logo} alt="TabulaRAG" className="hero-logo" />
+            <div className="hero-title">TabulaRAG</div>
+          </div>
+          <div className="hero-subtitle">
+            A fast-ingesting tabular data RAG tool backed with cell citations.
+          </div>
+        </div>
+        <div className="panel">
+          <p className="error">Connection Error: Server is currently offline.</p>
+        </div>
+      </div>
+    );
   }
 
   return (
