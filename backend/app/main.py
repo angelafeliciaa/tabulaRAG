@@ -133,6 +133,8 @@ def _normalize_headers(headers: List[str]) -> List[str]:
 
 
 ROW_INSERT_BATCH_SIZE = int(os.getenv("ROW_INSERT_BATCH_SIZE", "20000"))
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
+FILE_SNIFF_BYTES = int(os.getenv("FILE_SNIFF_BYTES", "65536"))
 
 
 def _detect_delimiter(filename: str | None) -> str:
@@ -143,11 +145,45 @@ def _detect_delimiter(filename: str | None) -> str:
     return ","
 
 
+def _validate_upload_content(upload: UploadFile) -> None:
+    # Enforce a hard file-size cap to reduce parser/DB abuse.
+    upload.file.seek(0, io.SEEK_END)
+    size = upload.file.tell()
+    upload.file.seek(0)
+    if size > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File is too large. Maximum size is {MAX_UPLOAD_BYTES} bytes.",
+        )
+
+    head = upload.file.read(FILE_SNIFF_BYTES)
+    upload.file.seek(0)
+
+    # Empty-file handling remains in _iter_rows for existing behavior/messages.
+    if not head:
+        return
+
+    if b"\x00" in head:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded file appears to be binary. Please upload a valid CSV/TSV text file.",
+        )
+
+    try:
+        head.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded file must be UTF-8 encoded text.",
+        ) from exc
+
+
 def _iter_rows(
     upload: UploadFile,
     has_header: bool,
 ) -> Tuple[List[str], Iterable[List[str]], str]:
     validate_filename(upload.filename or "")
+    _validate_upload_content(upload)
     detected_delimiter = _detect_delimiter(upload.filename)
     if detected_delimiter not in [",", "\t"]:
         raise HTTPException(status_code=400, detail="Delimiter must be comma or tab.")
