@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TabulaRAG — tabular data RAG with cell citations</title>
+  <link rel="icon" href="logo.png" type="image/png" />
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+    :root {
+      --bg: #0c0c0c;
+      --surface: #161616;
+      --border: #2a2a2a;
+      --text: #e0e0e0;
+      --text-dim: #888;
+      --accent: #b87333;
+      --accent-light: #d4a574;
+      --green: #4ec970;
+      --blue: #5b9cf5;
+      --cyan: #6dcfd4;
+    }
+
+    html { scroll-behavior: smooth }
+
+    body {
+      font-family: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    a { color: var(--accent-light); text-decoration: none }
+    a:hover { text-decoration: underline }
+
+    /* NAV */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0;
+      z-index: 100;
+      background: rgba(12,12,12,.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 2rem;
+      height: 56px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    nav .logo { display: flex; align-items: center; gap: .5rem; font-weight: 700; font-size: 1.1rem; color: var(--accent-light) }
+    nav .logo img { width: 26px; height: 26px; border-radius: 5px }
+    nav .links { display: flex; gap: 1.5rem; font-size: .85rem }
+    nav .links a { color: var(--text-dim) }
+    nav .links a:hover { color: var(--text) }
+
+    /* HERO */
+    .hero {
+      min-height: 100vh;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center;
+      padding: 6rem 1.5rem 4rem;
+    }
+    .hero > img { width: 120px; height: 120px; margin-bottom: 1.5rem; border-radius: 16px }
+    .hero h1 { font-size: 3rem; font-weight: 800; letter-spacing: -.02em; color: var(--accent-light) }
+    .hero .tagline {
+      font-size: 1.15rem; color: var(--text-dim);
+      max-width: 540px; margin: 1rem auto 2rem;
+      line-height: 1.7;
+    }
+    .hero .tagline strong { color: var(--text) }
+    .cta-row { display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center }
+    .btn {
+      display: inline-flex; align-items: center; gap: .5rem;
+      padding: .65rem 1.4rem;
+      border-radius: 6px;
+      font-size: .9rem;
+      font-family: inherit;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .btn-primary { background: var(--accent); color: #0c0c0c; border-color: var(--accent) }
+    .btn-primary:hover { background: var(--accent-light); text-decoration: none }
+    .btn-ghost { background: transparent; color: var(--text) }
+    .btn-ghost:hover { background: var(--surface); text-decoration: none }
+
+    /* TERMINAL */
+    .terminal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      max-width: 660px;
+      width: 100%;
+      margin: 3rem auto 0;
+      overflow: hidden;
+      text-align: left;
+    }
+    .terminal-bar {
+      display: flex; align-items: center; gap: 6px;
+      padding: 10px 14px;
+      background: #1a1a1a;
+      border-bottom: 1px solid var(--border);
+    }
+    .terminal-dot { width: 10px; height: 10px; border-radius: 50% }
+    .terminal-body {
+      padding: 1rem 1.25rem;
+      font-size: .82rem;
+      line-height: 1.8;
+      overflow-x: auto;
+    }
+    .terminal-body .prompt { color: var(--green) }
+    .terminal-body .cmd { color: var(--text) }
+    .terminal-body .out { color: var(--text-dim) }
+    .terminal-body .str { color: var(--accent-light) }
+    .terminal-body .num { color: var(--cyan) }
+    .terminal-body .ok { color: var(--green) }
+    .terminal-body .key { color: var(--blue) }
+    .terminal-body .cursor {
+      display: inline-block; width: 8px; height: 15px;
+      background: var(--accent-light);
+      animation: blink 1s step-end infinite;
+      vertical-align: text-bottom;
+      margin-left: 2px;
+    }
+    @keyframes blink { 50% { opacity: 0 } }
+
+    /* SECTIONS */
+    section { padding: 5rem 1.5rem; max-width: 900px; margin: 0 auto }
+    section h2 {
+      font-size: 1.6rem; font-weight: 700; margin-bottom: .5rem;
+      color: var(--accent-light);
+    }
+    section .subtitle { color: var(--text-dim); margin-bottom: 2.5rem; font-size: .95rem }
+
+    /* FEATURE GRID */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      gap: 1rem;
+    }
+    .feature-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+      transition: border-color .15s;
+    }
+    .feature-card:hover { border-color: var(--accent) }
+    .feature-card h3 { font-size: .95rem; margin-bottom: .4rem }
+    .feature-card p { font-size: .8rem; color: var(--text-dim); line-height: 1.6 }
+    .feature-card .tag {
+      display: inline-block;
+      font-size: .65rem;
+      padding: 2px 6px;
+      border-radius: 3px;
+      margin-bottom: .6rem;
+      background: rgba(184,115,51,.12);
+      color: var(--accent-light);
+    }
+
+    /* STEPS */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 1.25rem;
+    }
+    .step {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+    }
+    .step-num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: rgba(184,115,51,.15);
+      color: var(--accent);
+      font-size: .8rem;
+      font-weight: 700;
+      margin-bottom: .75rem;
+    }
+    .step h3 { font-size: .9rem; margin-bottom: .35rem }
+    .step p { font-size: .8rem; color: var(--text-dim); line-height: 1.6 }
+
+    /* ENDPOINTS TABLE */
+    .endpoints-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .endpoints-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .82rem;
+    }
+    .endpoints-table th {
+      text-align: left;
+      padding: .6rem 1rem;
+      color: var(--text-dim);
+      font-weight: 600;
+      font-size: .72rem;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      border-bottom: 1px solid var(--border);
+    }
+    .endpoints-table td {
+      padding: .55rem 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .endpoints-table tr:last-child td { border-bottom: none }
+    .endpoints-table td code {
+      background: rgba(184,115,51,.08);
+      padding: 1px 5px;
+      border-radius: 3px;
+      color: var(--accent-light);
+      font-size: .78rem;
+    }
+    .badge {
+      display: inline-block;
+      font-size: .65rem;
+      padding: 2px 7px;
+      border-radius: 3px;
+      font-weight: 600;
+    }
+    .badge-get { background: rgba(78,201,112,.12); color: var(--green) }
+    .badge-post { background: rgba(91,156,245,.12); color: var(--blue) }
+    .badge-mcp { background: rgba(184,115,51,.12); color: var(--accent-light) }
+
+    /* QUICKSTART */
+    .quickstart-code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem 1.5rem;
+      font-size: .82rem;
+      line-height: 1.9;
+      overflow-x: auto;
+    }
+    .quickstart-code .comment { color: #555 }
+
+    /* FOOTER */
+    footer {
+      text-align: center;
+      padding: 3rem 1.5rem;
+      color: var(--text-dim);
+      font-size: .8rem;
+      border-top: 1px solid var(--border);
+    }
+
+    /* DIVIDER */
+    .divider {
+      max-width: 900px;
+      margin: 0 auto;
+      border: none;
+      border-top: 1px solid var(--border);
+    }
+
+    @media (max-width: 600px) {
+      .hero h1 { font-size: 2.2rem }
+      .hero .tagline { font-size: 1rem }
+      .hero > img { width: 80px; height: 80px }
+      nav .links { gap: 1rem }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="logo">
+    <img src="logo.png" alt="tabulaRAG logo" />
+    TabulaRAG
+  </div>
+  <div class="links">
+    <a href="#features">Features</a>
+    <a href="#how-it-works">How it works</a>
+    <a href="#api">API</a>
+    <a href="#quickstart">Quickstart</a>
+    <a href="https://github.com/angelafeliciaa/tabulaRAG">GitHub</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<div class="hero">
+  <img src="logo.png" alt="tabulaRAG logo" />
+
+  <h1>TabulaRAG</h1>
+  <p class="tagline">
+    <strong>Fast-ingesting tabular data RAG</strong> with cell-level citations.<br/>
+    Upload CSV/TSV, get vector-powered search and structured queries via REST or MCP.
+  </p>
+
+  <div class="cta-row">
+    <a href="#quickstart" class="btn btn-primary">Get started</a>
+    <a href="https://github.com/angelafeliciaa/tabulaRAG" class="btn btn-ghost">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="width:16px;height:16px;flex-shrink:0"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+    <a href="https://github.com/angelafeliciaa/tabulaRAG/releases/tag/v1.0.0" class="btn btn-ghost">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="width:16px;height:16px;flex-shrink:0"><path d="M1 7.775V2.75C1 1.784 1.784 1 2.75 1h5.025c.464 0 .91.184 1.238.513l6.25 6.25a1.75 1.75 0 0 1 0 2.474l-5.026 5.026a1.75 1.75 0 0 1-2.474 0l-6.25-6.25A1.752 1.752 0 0 1 1 7.775Zm1.5 0c0 .066.026.13.073.177l6.25 6.25a.25.25 0 0 0 .354 0l5.025-5.025a.25.25 0 0 0 0-.354l-6.25-6.25a.25.25 0 0 0-.177-.073H2.75a.25.25 0 0 0-.25.25ZM6 5a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z"/></svg>
+      v1.0.0
+    </a>
+  </div>
+
+  <div class="terminal">
+    <div class="terminal-bar">
+      <div class="terminal-dot" style="background:#ff5f57"></div>
+      <div class="terminal-dot" style="background:#febc2e"></div>
+      <div class="terminal-dot" style="background:#28c840"></div>
+    </div>
+    <div class="terminal-body">
+      <div class="out">{</div>
+      <div class="out">&nbsp; <span class="key">"dataset_id"</span>: <span class="num">1</span>,</div>
+      <div class="out">&nbsp; <span class="key">"name"</span>: <span class="str">"q1_sales"</span>,</div>
+      <div class="out">&nbsp; <span class="key">"rows"</span>: <span class="num">48201</span>,</div>
+      <div class="out">&nbsp; <span class="key">"columns"</span>: <span class="num">12</span></div>
+      <div class="out">}</div>
+      <div class="out">&nbsp;</div>
+      <div class="out"><span class="ok">Indexing vectors...</span> <span class="num">48201/48201</span> <span class="ok">ready</span></div>
+      <div class="out">&nbsp;</div>
+      <div><span class="prompt">$</span> <span class="cursor"></span></div>
+    </div>
+  </div>
+</div>
+
+<!-- FEATURES -->
+<hr class="divider" />
+<section id="features">
+  <h2>Features</h2>
+  <p class="subtitle">Everything you need to make tabular data searchable and queryable.</p>
+
+  <div class="features-grid">
+    <div class="feature-card">
+      <div class="tag">ingestion</div>
+      <h3>Fast ingestion</h3>
+      <p>Upload CSV/TSV files. Ingests via PostgreSQL COPY for high throughput, with automatic type detection.</p>
+    </div>
+    <div class="feature-card">
+      <div class="tag">search</div>
+      <h3>Vector search</h3>
+      <p>Every row is embedded and indexed in Qdrant. Semantic search finds relevant data across your tables.</p>
+    </div>
+    <div class="feature-card">
+      <div class="tag">retrieval</div>
+      <h3>Cell citations</h3>
+      <p>Query results point to exact cells, not just rows. Know precisely where each answer comes from.</p>
+    </div>
+    <div class="feature-card">
+      <div class="tag">analytics</div>
+      <h3>Aggregation &amp; filtering</h3>
+      <p>Built-in aggregate and filter endpoints. SUM, AVG, COUNT with group-by, plus advanced row filtering.</p>
+    </div>
+    <div class="feature-card">
+      <div class="tag">integration</div>
+      <h3>MCP endpoint</h3>
+      <p>Streamable HTTP MCP server built-in. Connect any AI assistant or tool runner directly to your data.</p>
+    </div>
+    <div class="feature-card">
+      <div class="tag">frontend</div>
+      <h3>Web UI</h3>
+      <p>Upload, browse, search, and manage tables from a clean React frontend. Dark mode included.</p>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<hr class="divider" />
+<section id="how-it-works">
+  <h2>How it works</h2>
+  <p class="subtitle">From CSV to semantic search in three steps.</p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <h3>Upload</h3>
+      <p>Drop a CSV or TSV file. Rows are parsed, typed, and bulk-inserted into PostgreSQL via COPY.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <h3>Index</h3>
+      <p>A background worker embeds every row using sentence-transformers and upserts vectors into Qdrant.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <h3>Query</h3>
+      <p>Search semantically, filter rows, or aggregate columns. Results include cell-level citations.</p>
+    </div>
+  </div>
+</section>
+
+<!-- API -->
+<hr class="divider" />
+<section id="api">
+  <h2>API</h2>
+  <p class="subtitle">REST endpoints and MCP for AI tool integration.</p>
+
+  <div class="endpoints-wrap">
+    <table class="endpoints-table">
+      <thead>
+        <tr>
+          <th>Method</th>
+          <th>Endpoint</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="badge badge-get">GET</span></td>
+          <td><code>/tables</code></td>
+          <td>List all datasets with metadata</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-get">GET</span></td>
+          <td><code>/tables/{id}/columns</code></td>
+          <td>Get column names for a dataset</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-get">GET</span></td>
+          <td><code>/tables/{id}/slice</code></td>
+          <td>Browse raw rows with pagination</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-post">POST</span></td>
+          <td><code>/semantic_query</code></td>
+          <td>Semantic search with cell citations</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-post">POST</span></td>
+          <td><code>/aggregate</code></td>
+          <td>SUM, AVG, COUNT with group-by</td>
+        </tr>
+        <tr>
+          <td><span class="badge badge-post">POST</span></td>
+          <td><code>/filter</code></td>
+          <td>Advanced row filtering</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- QUICKSTART -->
+<hr class="divider" />
+<section id="quickstart">
+  <h2>Quickstart</h2>
+  <p class="subtitle">Up and running with Docker in under a minute.</p>
+
+  <div class="quickstart-code">
+    <span class="comment"># Clone the repo</span><br/>
+    <span class="prompt">$</span> git clone https://github.com/angelafeliciaa/tabulaRAG && cd tabulaRAG<br/>
+    <br/>
+    <span class="comment"># Configure environment</span><br/>
+    <span class="prompt">$</span> cp .env.example .env<br/>
+    <br/>
+    <span class="comment"># Start all services (frontend, backend, postgres, qdrant)</span><br/>
+    <span class="prompt">$</span> ./scripts/dev-up.sh<br/>
+    <br/>
+    <span class="comment"># Open the UI</span><br/>
+    <span class="prompt">$</span> open http://localhost:5173
+  </div>
+</section>
+
+<footer>
+  <p>MIT License &middot; </p>
+</footer>
+
+</body>
+</html>
