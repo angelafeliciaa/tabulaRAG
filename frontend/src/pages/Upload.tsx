@@ -1985,6 +1985,8 @@ export default function Upload() {
                     : indexState === "error"
                       ? "Index failed"
                       : "Indexed";
+              const isIndexing = indexState === "indexing";
+              const indexStatusText = indexStatus?.message || indexLabel;
 
               return (
                 <li key={table.dataset_id}>
@@ -2055,20 +2057,20 @@ export default function Upload() {
 
                     <div
                       className={`index-job ${indexState}`}
-                      title={indexStatus?.message || indexLabel}
-                      role={indexState === "indexing" ? "progressbar" : "status"}
-                      aria-label={`${table.name} index status`}
-                      aria-valuemin={indexState === "indexing" ? 0 : undefined}
-                      aria-valuemax={indexState === "indexing" ? 100 : undefined}
-                      aria-valuenow={indexState === "indexing" ? indexProgress : undefined}
+                      title={indexStatusText}
+                      role={isIndexing ? "progressbar" : "status"}
+                      aria-label={
+                        isIndexing ? `${table.name} index status` : `${table.name}: ${indexStatusText}`
+                      }
+                      aria-valuemin={isIndexing ? 0 : undefined}
+                      aria-valuemax={isIndexing ? 100 : undefined}
+                      aria-valuenow={isIndexing ? indexProgress : undefined}
                       aria-valuetext={
-                        indexState === "indexing"
-                          ? `${indexLabel}. ${indexProgress}% complete.`
-                          : indexStatus?.message || indexLabel
+                        isIndexing ? `${indexLabel}. ${indexProgress}% complete.` : undefined
                       }
                     >
                       <div className="index-job-ready">{indexLabel}</div>
-                      {indexState === "indexing" && (
+                      {isIndexing && (
                         <div className="index-job-track" aria-hidden="true">
                           <div
                             className="index-job-fill indexing"
