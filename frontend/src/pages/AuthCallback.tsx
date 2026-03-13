@@ -29,7 +29,9 @@ export default function AuthCallback({ onLogin }: AuthCallbackProps) {
     return (
       <div className="login-page">
         <div className="login-card">
-          <p className="login-error">No authorization code received from GitHub.</p>
+          <p className="login-error" role="alert">
+            No authorization code received from GitHub.
+          </p>
           <button
             type="button"
             className="login-btn"
@@ -46,7 +48,9 @@ export default function AuthCallback({ onLogin }: AuthCallbackProps) {
     return (
       <div className="login-page">
         <div className="login-card">
-          <p className="login-error">{error}</p>
+          <p className="login-error" role="alert">
+            {error}
+          </p>
           <button
             type="button"
             className="login-btn"
@@ -62,7 +66,9 @@ export default function AuthCallback({ onLogin }: AuthCallbackProps) {
   return (
     <div className="login-page">
       <div className="login-card">
-        <p className="login-subtitle">Signing in with GitHub...</p>
+        <p className="login-subtitle" role="status" aria-live="polite">
+          Signing in with GitHub...
+        </p>
       </div>
     </div>
   );

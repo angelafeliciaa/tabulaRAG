@@ -213,7 +213,11 @@ export default function HighlightView() {
         {queryText && <div className="small">Query: {queryText}</div>}
       </div>
 
-      {err && <p className="error">{err}</p>}
+      {err && (
+        <p className="error" role="alert">
+          {err}
+        </p>
+      )}
 
       {slice && (
         <>
@@ -229,6 +233,7 @@ export default function HighlightView() {
               rows={slice.rows}
               highlight={slice.highlight}
               rowOffset={slice.rowFrom}
+              caption={`Highlighted rows from ${tableName || "the selected table"}.`}
             />
           </div>
 
