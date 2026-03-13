@@ -207,8 +207,6 @@ def parse_money(value: Any) -> Optional[Tuple[str, float, Optional[str]]]:
     return (_format_money_canonical(num), float(num), currency)
 
 
-# Fraction of non-empty values that must look like money to treat column as money.
-MONEY_COLUMN_THRESHOLD = 0.8
 # Cap rows scanned for money-column inference (avoids scanning huge datasets).
 MAX_ROWS_FOR_MONEY_INFERENCE = 2000
 
@@ -240,13 +238,12 @@ def _looks_like_money(value: str) -> bool:
     return False
 
 
-def is_money_column(values: List[str], threshold: float = MONEY_COLUMN_THRESHOLD) -> bool:
-    """Returns True if majority of non-empty values look like money."""
-    non_empty = [v.strip() for v in values if v and str(v).strip()]
-    if not non_empty:
-        return False
-    hits = sum(1 for v in non_empty if _looks_like_money(v))
-    return hits / len(non_empty) >= threshold
+def is_money_column(values: List[str]) -> bool:
+    """Returns True if at least one value looks like money (no threshold; columns with many nulls can still be money)."""
+    for v in values:
+        if v is not None and str(v).strip() and _looks_like_money(str(v)):
+            return True
+    return False
 
 
 def infer_money_columns(
@@ -257,8 +254,8 @@ def infer_money_columns(
 ) -> Set[int]:
     """
     Infer which column indices are money columns by scanning up to MAX_ROWS_FOR_MONEY_INFERENCE rows.
-    A column is money if at least MONEY_COLUMN_THRESHOLD of its non-empty values look like money
-    (currency symbol, currency code prefix/suffix, or comma-thousands pattern like 1,000.00).
+    A column is money if any value looks like money (currency symbol or code); no threshold,
+    so columns with many nulls can still be detected as money.
     """
     ncols = len(normalized_headers)
     rows_to_scan = rows[:MAX_ROWS_FOR_MONEY_INFERENCE]

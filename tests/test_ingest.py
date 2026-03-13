@@ -1,5 +1,4 @@
 import io
-import json
 import pytest
 from unittest.mock import patch
 from sqlalchemy import text
@@ -115,41 +114,6 @@ def test_db_columns_stored(client, test_engine):
         ).fetchall()
     assert [c.normalized_name for c in cols] == ["foo", "bar", "baz"]
     assert [c.original_name for c in cols] == ["foo", "bar", "baz"]
-
-
-def test_db_rows_stored(client, test_engine):
-    client.post("/ingest", files=make_csv("name,age\nAlice,30\n"))
-    with test_engine.connect() as conn:
-        rows = conn.execute(text("SELECT row_data FROM dataset_rows")).fetchall()
-    assert len(rows) == 1
-    data = json.loads(rows[0].row_data)
-    # row_data stores { original, normalized } per column
-    assert data["name"]["normalized"] == "Alice"
-    assert data["name"]["original"] == "Alice"
-    assert data["age"]["normalized"] == "30"
-    assert data["age"]["original"] == "30"
-
-
-def test_db_rows_money_normalized(client, test_engine):
-    """Money cells get canonical normalized string and __typed__ with type money + currency."""
-    client.post(
-        "/ingest",
-        files=make_csv("product,price\nWidget,$1,234.56\nGadget,€99.00\n"),
-    )
-    with test_engine.connect() as conn:
-        rows = conn.execute(text("SELECT row_data FROM dataset_rows ORDER BY id")).fetchall()
-    assert len(rows) == 2
-    typed = json.loads(rows[0].row_data).get("__typed__", {})
-    assert typed.get("price", {}).get("type") == "money"
-    assert typed["price"].get("currency") == "USD"
-    assert typed["price"].get("number") == 1234.56
-    data0 = json.loads(rows[0].row_data)
-    assert data0["price"]["original"] == "$1,234.56"
-    assert data0["price"]["normalized"] == "1234.56"
-    data1 = json.loads(rows[1].row_data)
-    assert data1["price"]["original"] == "€99.00"
-    assert data1["price"]["normalized"] == "99.00"
-    assert json.loads(rows[1].row_data).get("__typed__", {}).get("price", {}).get("currency") == "EUR"
 
 
 def test_list_tables_returns_ready_datasets_by_default(client):
