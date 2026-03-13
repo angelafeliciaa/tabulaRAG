@@ -455,14 +455,21 @@ export default function TableView() {
             </div>
           </div>
           <div className="table-view-tools">
-            <input
-              type="text"
-              className="table-view-search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search for values"
-              aria-label="Search rows"
-            />
+            <div className="table-view-search-wrap">
+              <span className="table-view-search-toggle" aria-hidden="true">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M10.5 3a7.5 7.5 0 0 1 5.96 12.06l4.24 4.24a1 1 0 0 1-1.42 1.42l-4.24-4.24A7.5 7.5 0 1 1 10.5 3zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z" fill="currentColor" />
+                </svg>
+              </span>
+              <input
+                type="text"
+                className="table-view-search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search for values"
+                aria-label="Search rows"
+              />
+            </div>
             {highlightedRow !== null && (
               <button
                 type="button"
@@ -481,6 +488,11 @@ export default function TableView() {
                 </svg>
               </Link>
             )}
+            <Link className="table-view-icon-btn" to="/" aria-label="Home" title="Home">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M4 11.2 12 4l8 7.2v7.3a1 1 0 0 1-1 1h-4.6a1 1 0 0 1-1-1v-4.6h-2.8v4.6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-7.3z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </Link>
           </div>
         </div>
       </div>

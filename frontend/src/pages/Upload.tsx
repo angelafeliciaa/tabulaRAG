@@ -27,7 +27,8 @@ const SAFE_TABLE_NAME_MAX_LENGTH = 64;
 
 type ToastState = { id: number; kind: "success"; message: string };
 type UploadQueuePhase = "idle" | UploadProgress["phase"] | "success" | "error";
-type TableSortMode = "alphabet" | "rows" | "recent";
+type TableSortMode = "alphabetical" | "numberOfColumns" | "numberOfRows" | "recentlyUploaded";
+type SortDirection = "asc" | "desc";
 type UploadQueueItem = {
   id: string;
   file: File;
@@ -326,8 +327,11 @@ export default function Upload() {
   const [editingName, setEditingName] = useState("");
   const [renameHintId, setRenameHintId] = useState<number | null>(null);
   const [tableSearchQuery, setTableSearchQuery] = useState("");
-  const [tableSortMode, setTableSortMode] = useState<TableSortMode>("recent");
+  const [tableSortMode, setTableSortMode] = useState<TableSortMode>("recentlyUploaded");
+  const [tableSortDirection, setTableSortDirection] = useState<SortDirection>("desc");
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
+  const [queueUploadMenuOpen, setQueueUploadMenuOpen] = useState(false);
   const [reloadNotice, setReloadNotice] = useState<string | null>(null);
   const [deletingTableIds, setDeletingTableIds] = useState<Record<number, boolean>>({});
   const [isDragActive, setIsDragActive] = useState(false);
@@ -360,6 +364,8 @@ export default function Upload() {
   const firstQueuedNameInputRef = useRef<HTMLInputElement | null>(null);
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const sortMenuRef = useRef<HTMLDivElement | null>(null);
+  const uploadMenuRef = useRef<HTMLDivElement | null>(null);
+  const queueUploadMenuRef = useRef<HTMLDivElement | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -546,7 +552,7 @@ export default function Upload() {
   }, [editingId, busy]);
 
   useEffect(() => {
-    if (!sortMenuOpen) {
+    if (!sortMenuOpen && !uploadMenuOpen && !queueUploadMenuOpen) {
       return;
     }
 
@@ -555,11 +561,19 @@ export default function Upload() {
       if (sortMenuRef.current && !sortMenuRef.current.contains(target)) {
         setSortMenuOpen(false);
       }
+      if (uploadMenuRef.current && !uploadMenuRef.current.contains(target)) {
+        setUploadMenuOpen(false);
+      }
+      if (queueUploadMenuRef.current && !queueUploadMenuRef.current.contains(target)) {
+        setQueueUploadMenuOpen(false);
+      }
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setSortMenuOpen(false);
+        setUploadMenuOpen(false);
+        setQueueUploadMenuOpen(false);
       }
     };
 
@@ -569,7 +583,7 @@ export default function Upload() {
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };
-  }, [sortMenuOpen]);
+  }, [queueUploadMenuOpen, sortMenuOpen, uploadMenuOpen]);
 
   useEffect(() => {
     if (busy || uploadQueue.length === 0) {
@@ -1165,9 +1179,19 @@ export default function Upload() {
     return Boolean(err && isOfflineConnectionError(err));
   }, [tables.length, busy, err]);
   const pinnedTableIdSet = useMemo(() => new Set(pinnedTableIds), [pinnedTableIds]);
+  function applySortSelection(mode: TableSortMode) {
+    if (tableSortMode === mode) {
+      setTableSortDirection((current) => (current === "asc" ? "desc" : "asc"));
+    } else {
+      setTableSortMode(mode);
+      setTableSortDirection(mode === "alphabetical" ? "asc" : "desc");
+    }
+    setSortMenuOpen(false);
+  }
+
   const sortedTables = useMemo(() => {
     const sortByMode = (a: TableSummary, b: TableSummary): number => {
-      if (tableSortMode === "alphabet") {
+      if (tableSortMode === "alphabetical") {
         const byName = a.name.localeCompare(b.name, undefined, {
           sensitivity: "base",
           numeric: true,
@@ -1175,21 +1199,26 @@ export default function Upload() {
         if (byName !== 0) {
           return byName;
         }
-      } else if (tableSortMode === "rows") {
-        const byRows = b.row_count - a.row_count;
+      } else if (tableSortMode === "numberOfRows") {
+        const byRows = a.row_count - b.row_count;
         if (byRows !== 0) {
           return byRows;
         }
+      } else if (tableSortMode === "numberOfColumns") {
+        const byColumns = a.column_count - b.column_count;
+        if (byColumns !== 0) {
+          return byColumns;
+        }
       }
 
-      // Default/fallback ordering is most recent first.
+      // Default/fallback ordering is recently uploaded first.
       const aTime = Number.isFinite(Date.parse(a.created_at))
         ? Date.parse(a.created_at)
         : a.dataset_id;
       const bTime = Number.isFinite(Date.parse(b.created_at))
         ? Date.parse(b.created_at)
         : b.dataset_id;
-      return bTime - aTime;
+      return aTime - bTime;
     };
 
     const next = [...tables];
@@ -1199,10 +1228,11 @@ export default function Upload() {
       if (aPinned !== bPinned) {
         return aPinned ? -1 : 1;
       }
-      return sortByMode(a, b);
+      const byMode = sortByMode(a, b);
+      return tableSortDirection === "asc" ? byMode : -byMode;
     });
     return next;
-  }, [tables, pinnedTableIdSet, tableSortMode]);
+  }, [tables, pinnedTableIdSet, tableSortDirection, tableSortMode]);
   const normalizedTableSearchQuery = tableSearchQuery.trim().toLowerCase();
   const filteredTables = useMemo(() => {
     if (!normalizedTableSearchQuery) {
@@ -1372,34 +1402,42 @@ export default function Upload() {
               }}
             />
             <div className="upload-icon-row">
-              <button
-                type="button"
-                className="upload-icon icon-trigger"
-                aria-label="Select files"
-                title="Select files"
-                onClick={() => {
-                  emptyFileInputRef.current?.click();
-                }}
-                disabled={busy}
-              >
-                <img src={uploadLogo} alt="" />
-              </button>
-              <button
-                type="button"
-                className="upload-icon icon-trigger"
-                aria-label="Select folder"
-                title="Select folder"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  emptyFolderInputRef.current?.click();
-                }}
-                disabled={busy}
-              >
-                <svg viewBox="0 0 24 24" role="presentation" aria-hidden="true">
-                  <path d="M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v1H3V6zm0 4h20v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8z" />
-                </svg>
-              </button>
+              <div className="sort-menu-wrap" ref={uploadMenuRef}>
+                <button
+                  type="button"
+                  className="upload-icon icon-trigger"
+                  aria-label="Choose files or folder"
+                  title="Choose files or folder"
+                  onClick={() => setUploadMenuOpen((current) => !current)}
+                  disabled={busy}
+                >
+                  <img src={uploadLogo} alt="" />
+                </button>
+                {uploadMenuOpen && (
+                  <div className="sort-menu upload-picker-menu" role="dialog" aria-label="Upload options">
+                    <button
+                      type="button"
+                      className="sort-menu-item"
+                      onClick={() => {
+                        setUploadMenuOpen(false);
+                        emptyFileInputRef.current?.click();
+                      }}
+                    >
+                      Upload files
+                    </button>
+                    <button
+                      type="button"
+                      className="sort-menu-item"
+                      onClick={() => {
+                        setUploadMenuOpen(false);
+                        emptyFolderInputRef.current?.click();
+                      }}
+                    >
+                      Upload folder
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="upload-title">Select or Drag &amp; Drop Your File(s) to Upload</div>
             <div className="upload-subtitle">Supported file formats: .csv, .tsv, folders</div>
@@ -1431,24 +1469,41 @@ export default function Upload() {
                 }}
                 className="file-input-hidden"
               />
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                type="button"
-                className="glass upload-add-more-button"
-                disabled={busy || isQueueInProgress}
-              >
-                <img src={plusIcon} alt="" aria-hidden="true" className="upload-add-icon" />
-                Add more files
-              </button>
-              <button
-                onClick={() => folderInputRef.current?.click()}
-                type="button"
-                className="glass upload-add-more-button"
-                disabled={busy || isQueueInProgress}
-              >
-                <img src={plusIcon} alt="" aria-hidden="true" className="upload-add-icon" />
-                Add folder
-              </button>
+              <div className="sort-menu-wrap" ref={queueUploadMenuRef}>
+                <button
+                  onClick={() => setQueueUploadMenuOpen((current) => !current)}
+                  type="button"
+                  className="glass upload-add-more-button"
+                  disabled={busy || isQueueInProgress}
+                >
+                  <img src={plusIcon} alt="" aria-hidden="true" className="upload-add-icon" />
+                  Add files or folder
+                </button>
+                {queueUploadMenuOpen && (
+                  <div className="sort-menu upload-picker-menu" role="dialog" aria-label="Add upload options">
+                    <button
+                      type="button"
+                      className="sort-menu-item"
+                      onClick={() => {
+                        setQueueUploadMenuOpen(false);
+                        fileInputRef.current?.click();
+                      }}
+                    >
+                      Add files
+                    </button>
+                    <button
+                      type="button"
+                      className="sort-menu-item"
+                      onClick={() => {
+                        setQueueUploadMenuOpen(false);
+                        folderInputRef.current?.click();
+                      }}
+                    >
+                      Add folder
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             <ul className="upload-queue-list" aria-label="Selected files for upload">
@@ -1645,7 +1700,11 @@ export default function Upload() {
                 title="Sort tables"
               >
                 <svg viewBox="0 0 24 24" role="presentation" className="sort-toggle-icon">
-                  <path d="M8.7 3.3a1 1 0 0 1 1.4 0l3 3a1 1 0 1 1-1.4 1.4L10.4 6.4V20a1 1 0 1 1-2 0V6.4L7.1 7.7a1 1 0 1 1-1.4-1.4l3-3zm6.6 17.4a1 1 0 0 1-1.4 0l-3-3a1 1 0 0 1 1.4-1.4l1.3 1.3V4a1 1 0 1 1 2 0v13.6l1.3-1.3a1 1 0 1 1 1.4 1.4l-3 3z" />
+                  {tableSortDirection === "asc" ? (
+                    <path d="M11.3 4.3a1 1 0 0 1 1.4 0l3.3 3.3a1 1 0 1 1-1.4 1.4L13 7.4V19a1 1 0 1 1-2 0V7.4L9.4 9a1 1 0 1 1-1.4-1.4l3.3-3.3z" />
+                  ) : (
+                    <path d="M12.7 19.7a1 1 0 0 1-1.4 0L8 16.4A1 1 0 1 1 9.4 15l1.6 1.6V5a1 1 0 1 1 2 0v11.6l1.6-1.6a1 1 0 1 1 1.4 1.4l-3.3 3.3z" />
+                  )}
                 </svg>
                 <span className="sort-toggle-text">Sort</span>
               </button>
@@ -1653,33 +1712,31 @@ export default function Upload() {
                 <div className="sort-menu" role="dialog" aria-label="Sort options">
                   <button
                     type="button"
-                    className={`sort-menu-item ${tableSortMode === "recent" ? "active" : ""}`}
-                    onClick={() => {
-                      setTableSortMode("recent");
-                      setSortMenuOpen(false);
-                    }}
+                    className={`sort-menu-item ${tableSortMode === "alphabetical" ? "active" : ""}`}
+                    onClick={() => applySortSelection("alphabetical")}
                   >
-                    Most recent
+                    Alphabetical {tableSortMode === "alphabetical" ? (tableSortDirection === "asc" ? "↑" : "↓") : ""}
                   </button>
                   <button
                     type="button"
-                    className={`sort-menu-item ${tableSortMode === "rows" ? "active" : ""}`}
-                    onClick={() => {
-                      setTableSortMode("rows");
-                      setSortMenuOpen(false);
-                    }}
+                    className={`sort-menu-item ${tableSortMode === "numberOfColumns" ? "active" : ""}`}
+                    onClick={() => applySortSelection("numberOfColumns")}
                   >
-                    Most rows
+                    Number of columns {tableSortMode === "numberOfColumns" ? (tableSortDirection === "asc" ? "↑" : "↓") : ""}
                   </button>
                   <button
                     type="button"
-                    className={`sort-menu-item ${tableSortMode === "alphabet" ? "active" : ""}`}
-                    onClick={() => {
-                      setTableSortMode("alphabet");
-                      setSortMenuOpen(false);
-                    }}
+                    className={`sort-menu-item ${tableSortMode === "numberOfRows" ? "active" : ""}`}
+                    onClick={() => applySortSelection("numberOfRows")}
                   >
-                    Alphabetical
+                    Number of rows {tableSortMode === "numberOfRows" ? (tableSortDirection === "asc" ? "↑" : "↓") : ""}
+                  </button>
+                  <button
+                    type="button"
+                    className={`sort-menu-item ${tableSortMode === "recentlyUploaded" ? "active" : ""}`}
+                    onClick={() => applySortSelection("recentlyUploaded")}
+                  >
+                    Recently uploaded {tableSortMode === "recentlyUploaded" ? (tableSortDirection === "asc" ? "↑" : "↓") : ""}
                   </button>
                 </div>
               )}
@@ -1874,6 +1931,7 @@ export default function Upload() {
               title="Open Full Table"
             >
               <img src={openIcon} alt="" aria-hidden="true" />
+              <span>View Full Table</span>
             </Link>
           )}
         </div>

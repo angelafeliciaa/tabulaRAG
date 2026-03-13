@@ -55,9 +55,14 @@ export default function App() {
         <img src={logo} alt="" aria-hidden="true" />
       </Link>
 
-      <div className={`server-status ${serverStatus}`}>
+      <div
+        className={`server-status ${serverStatus}`}
+        tabIndex={0}
+        aria-label={`MCP Server Connection Status: ${serverStatus}`}
+      >
         <span className="status-dot" />
-        <span>Server Connection: {serverStatus}</span>
+        <span className="status-short-label">{serverStatus}</span>
+        <span className="status-label">MCP Server Connection Status: {serverStatus}</span>
       </div>
 
       <div className="top-bar">
