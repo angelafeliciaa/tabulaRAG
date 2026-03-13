@@ -92,6 +92,11 @@ export interface TableSummary {
   created_at: string;
 }
 
+export interface ColumnMeta {
+  original_name: string | null;
+  normalized_name: string;
+}
+
 export interface TableSlice {
   dataset_id: number;
   offset: number;
@@ -100,6 +105,7 @@ export interface TableSlice {
   column_count: number;
   has_header: boolean;
   columns: string[];
+  columns_meta?: ColumnMeta[];
   rows: TableRow[];
 }
 
@@ -129,6 +135,7 @@ interface TableSliceApiResponse {
   column_count: number;
   has_header: boolean;
   columns: string[];
+  columns_meta?: ColumnMeta[];
   rows: TableSliceApiRow[];
 }
 
@@ -375,6 +382,7 @@ export async function getSlice(
     column_count: data.column_count,
     has_header: data.has_header,
     columns: data.columns,
+    columns_meta: data.columns_meta,
     rows,
   };
 }

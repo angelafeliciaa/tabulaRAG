@@ -2,7 +2,10 @@
 import re
 import unicodedata
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+# "dmy" = day/month/year, "mdy" = month/day/year, "ymd" = year/month/day
+DateFormatHint = str
 
 
 INTERNAL_TYPED_KEY = "__typed__"
@@ -26,11 +29,12 @@ def is_internal_key(key: str) -> bool:
 
 
 def normalize_headers(headers: List[str]) -> List[str]:
-    """Normalize header names: strip whitespace, empty → col_{index}, dedupe with _2, _3, …."""
+    """Normalize header names: strip, collapse internal whitespace to single space, empty → col_{index}, dedupe with _2, _3, …."""
     seen: Dict[str, int] = {}
     normalized: List[str] = []
     for idx, header in enumerate(headers):
-        base = (header or "").strip()
+        raw = (header or "").strip()
+        base = " ".join(raw.split()) if raw else ""
         if not base:
             base = f"col_{idx + 1}"
         key = base
@@ -152,6 +156,125 @@ def parse_date(value: Any) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _parse_dmy_or_mdy_parts(
+    a: int, b: int, year_raw: int, fmt: Optional[DateFormatHint]
+) -> Optional[Dict[str, Any]]:
+    """Interpret a, b, year_raw as date parts; fmt is 'dmy', 'mdy', or None (ambiguous)."""
+    year = year_raw + 2000 if year_raw < 100 else year_raw
+    if fmt == "dmy":
+        day, month = a, b
+    elif fmt == "mdy":
+        month, day = a, b
+    else:
+        # Ambiguous: both <= 12. Default dmy (day/month/year).
+        day, month = a, b
+    try:
+        parsed = datetime(year, month, day, tzinfo=timezone.utc)
+        return {"iso_date": parsed.date().isoformat(), "epoch_seconds": int(parsed.timestamp())}
+    except ValueError:
+        return None
+
+
+def parse_date_with_format(
+    value: Any, fmt: Optional[DateFormatHint] = None
+) -> Optional[Dict[str, Any]]:
+    """Parse date using optional format hint for ambiguous DD/MM/YY vs MM/DD/YY. Returns same shape as parse_date."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+
+    iso_match = _ISO_DATE_RE.match(text)
+    if iso_match:
+        year = int(iso_match.group(1))
+        month = int(iso_match.group(2))
+        day = int(iso_match.group(3))
+        try:
+            parsed = datetime(year, month, day, tzinfo=timezone.utc)
+            return {"iso_date": parsed.date().isoformat(), "epoch_seconds": int(parsed.timestamp())}
+        except ValueError:
+            return None
+
+    dmy_or_mdy = _DMY_OR_MDY_RE.match(text)
+    if dmy_or_mdy:
+        a = int(dmy_or_mdy.group(1))
+        b = int(dmy_or_mdy.group(2))
+        year_raw = int(dmy_or_mdy.group(3))
+        return _parse_dmy_or_mdy_parts(a, b, year_raw, fmt)
+
+    try:
+        parsed_epoch = datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
+        return {"iso_date": parsed_epoch.date().isoformat(), "epoch_seconds": int(parsed_epoch.timestamp())}
+    except ValueError:
+        return None
+
+
+def _date_like_parts(text: str) -> Optional[Tuple[int, int, int]]:
+    """If text matches DD/MM/YY or similar, return (a, b, year_raw). Else None."""
+    text = text.strip()
+    if not text:
+        return None
+    if _ISO_DATE_RE.match(text):
+        return None  # already unambiguous
+    m = _DMY_OR_MDY_RE.match(text)
+    if not m:
+        return None
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+
+def infer_column_date_format(samples: List[str]) -> Optional[DateFormatHint]:
+    """
+    Infer date format for a column from a list of date-like strings.
+    Returns 'dmy', 'mdy', or None. Uses disambiguating values (e.g. day > 12) when present.
+    """
+    first_is_day = False
+    second_is_day = False
+    for s in samples:
+        parts = _date_like_parts(s)
+        if parts is None:
+            continue
+        a, b, year_raw = parts
+        if a > 12:
+            first_is_day = True
+        if b > 12:
+            second_is_day = True
+    if first_is_day and not second_is_day:
+        return "dmy"
+    if second_is_day and not first_is_day:
+        return "mdy"
+    if first_is_day and second_is_day:
+        return None  # inconsistent column, leave ambiguous
+    return "dmy"  # all ambiguous (e.g. 01/01/01): default day/month/year
+
+
+def infer_date_formats_for_columns(
+    normalized_headers: List[str],
+    rows: List[List[str]],
+    *,
+    max_samples_per_column: int = 500,
+) -> Dict[int, Optional[DateFormatHint]]:
+    """Infer date format per column index by sampling column values. Used to disambiguate 01/01/01-style dates."""
+    ncols = len(normalized_headers)
+    by_col: Dict[int, List[str]] = {i: [] for i in range(ncols)}
+    for row in rows:
+        for i in range(ncols):
+            if len(by_col[i]) >= max_samples_per_column:
+                continue
+            cell = row[i] if i < len(row) else None
+            if cell is None:
+                continue
+            text = str(cell).strip()
+            if not text:
+                continue
+            if _ISO_DATE_RE.match(text) or _DMY_OR_MDY_RE.match(text):
+                by_col[i].append(text)
+    return {
+        i: infer_column_date_format(by_col[i]) if by_col[i] else None
+        for i in range(ncols)
+    }
+
+
 def _cell_value(val: Any) -> Any:
     """Normalize a cell value for storage: either legacy (plain str) or { original, normalized }."""
     if isinstance(val, dict) and "normalized" in val:
@@ -186,15 +309,29 @@ def normalize_row_obj(
     row: list[str],
     *,
     store_original: bool = True,
+    date_format_by_column: Optional[Dict[int, Optional[DateFormatHint]]] = None,
 ) -> Dict[str, Any]:
-    """Build row_data: keys are normalized column names; values are { original, normalized } or legacy plain normalized."""
+    """Build row_data: keys are normalized column names; values are { original, normalized } or legacy plain normalized.
+    When date_format_by_column is set, dates are parsed with that format and normalized value becomes ISO (YYYY-MM-DD).
+    """
     result: Dict[str, Any] = {}
     typed: Dict[str, Dict[str, Any]] = {}
 
     for i in range(len(normalized_headers)):
         key = normalized_headers[i]
         raw = row[i] if i < len(row) else None
-        normalized = normalize_text_value(raw)
+        text_normalized = normalize_text_value(raw)
+        fmt = (date_format_by_column or {}).get(i) if date_format_by_column else None
+        date_value = parse_date_with_format(raw, fmt) if raw is not None else None
+        if date_value is not None:
+            iso_date = date_value["iso_date"]
+            if store_original:
+                result[key] = {"original": raw, "normalized": iso_date}
+            else:
+                result[key] = iso_date
+            typed[key] = {"type": "date", **date_value}
+            continue
+        normalized = text_normalized
         if store_original:
             result[key] = {"original": raw if raw is not None else None, "normalized": normalized}
         else:
@@ -206,10 +343,6 @@ def normalize_row_obj(
         if numeric_value is not None:
             typed[key] = {"type": "number", "number": numeric_value}
             continue
-
-        date_value = parse_date(normalized)
-        if date_value is not None:
-            typed[key] = {"type": "date", **date_value}
 
     if typed:
         result[INTERNAL_TYPED_KEY] = typed

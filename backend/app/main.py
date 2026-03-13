@@ -3,7 +3,7 @@ import io
 import json
 import logging
 import os
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Optional, Tuple
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,7 +29,11 @@ from app.qdrant_client import get_collection_point_count
 from fastapi_mcp import FastApiMCP
 from app.routes_tables import router as tables_router
 from app.routes_query import router as query_router
-from app.normalization import normalize_headers, normalize_row_obj
+from app.normalization import (
+    infer_date_formats_for_columns,
+    normalize_headers,
+    normalize_row_obj,
+)
 from app.name_guard import normalize_dataset_name_or_raise
 from app.auth import require_auth, exchange_github_code, create_jwt, GITHUB_CLIENT_ID
 
@@ -215,14 +219,24 @@ def _iter_rows(
     return raw_headers, normalized_headers, rows_iter, detected_delimiter
 
 
-def _build_row_obj(normalized_headers: List[str], row: List[str]) -> dict:
-    return normalize_row_obj(normalized_headers, row, store_original=True)
+def _build_row_obj(
+    normalized_headers: List[str],
+    row: List[str],
+    date_format_by_column: Optional[dict] = None,
+) -> dict:
+    return normalize_row_obj(
+        normalized_headers,
+        row,
+        store_original=True,
+        date_format_by_column=date_format_by_column,
+    )
 
 
 def _insert_rows_postgres_copy(
     dataset_id: int,
     headers: List[str],
     rows_iter: Iterable[List[str]],
+    date_format_by_column: Optional[dict] = None,
 ) -> int:
     """Fast path for PostgreSQL ingestion using COPY."""
     row_count = 0
@@ -233,7 +247,7 @@ def _insert_rows_postgres_copy(
                 "COPY dataset_rows (dataset_id, row_index, row_data) FROM STDIN"
             ) as copy:
                 for row_index, row in enumerate(rows_iter):
-                    row_obj = _build_row_obj(headers, row)
+                    row_obj = _build_row_obj(headers, row, date_format_by_column)
                     copy.write_row(
                         (
                             dataset_id,
@@ -255,13 +269,14 @@ def _insert_rows_batched(
     dataset_id: int,
     headers: List[str],
     rows_iter: Iterable[List[str]],
+    date_format_by_column: Optional[dict] = None,
 ) -> int:
     """Fallback ingestion path (works for SQLite and non-Postgres)."""
     row_count = 0
     with SessionLocal() as db:
         batch_rows = []
         for row_index, row in enumerate(rows_iter):
-            row_obj = _build_row_obj(headers, row)
+            row_obj = _build_row_obj(headers, row, date_format_by_column)
             batch_rows.append(
                 {
                     "dataset_id": dataset_id,
@@ -419,12 +434,18 @@ def ingest_table(
         dataset_delimiter = dataset.delimiter
         dataset_has_header = dataset.has_header
 
+    rows_list = list(rows_iter)
+    date_format_by_column = infer_date_formats_for_columns(normalized_headers, rows_list)
     row_count = 0
     try:
         if engine.dialect.name == "postgresql":
-            row_count = _insert_rows_postgres_copy(dataset_id, normalized_headers, rows_iter)
+            row_count = _insert_rows_postgres_copy(
+                dataset_id, normalized_headers, rows_list, date_format_by_column
+            )
         else:
-            row_count = _insert_rows_batched(dataset_id, normalized_headers, rows_iter)
+            row_count = _insert_rows_batched(
+                dataset_id, normalized_headers, rows_list, date_format_by_column
+            )
     except Exception as exc:
         with SessionLocal() as db:
             db.execute(text("DELETE FROM datasets WHERE id = :id"), {"id": dataset_id})

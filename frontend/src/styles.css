@@ -2072,6 +2072,10 @@ th {
   z-index: 1;
 }
 
+.table-header-cell-preserve-ws {
+    white-space: pre-wrap;
+}
+
 .table-sort-button {
     display: inline-flex;
     align-items: center;

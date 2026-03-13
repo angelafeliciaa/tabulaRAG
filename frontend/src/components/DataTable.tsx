@@ -2,6 +2,8 @@ import { type MouseEvent, useMemo, useState } from "react";
 
 type DataTableProps = {
   columns: string[];
+  /** Optional display labels for column headers (same order as columns). Use when showing original vs normalized names. */
+  columnLabels?: string[];
   rows: Record<string, unknown>[];
   highlight?: { rows: number[]; cols: string[] };
   rowOffset?: number;
@@ -184,6 +186,7 @@ function inferSortKind(rows: Record<string, unknown>[], column: string): SortKin
 
 export default function DataTable({
   columns,
+  columnLabels,
   rows,
   highlight,
   rowOffset = 0,
@@ -192,6 +195,7 @@ export default function DataTable({
   formatCellValue,
   onCellContextMenu,
 }: DataTableProps) {
+  const labels = columnLabels ?? columns;
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const highlightedRows = new Set(highlight?.rows || []);
@@ -272,13 +276,19 @@ export default function DataTable({
           <thead>
             <tr>
               <th className="mono">#</th>
-              {columns.map((column) => {
+              {columns.map((column, i) => {
+                const label = labels[i] ?? column;
                 if (!sortable) {
-                  return <th key={column}>{column}</th>;
+                  return (
+                    <th key={column} className="table-header-cell-preserve-ws">
+                      {label}
+                    </th>
+                  );
                 }
                 return (
                   <th
                     key={column}
+                    className="table-header-cell-preserve-ws"
                     aria-sort={
                       sortColumn === column
                         ? sortDirection === "asc"
@@ -291,9 +301,9 @@ export default function DataTable({
                       type="button"
                       className="table-sort-button"
                       onClick={() => toggleSort(column)}
-                      title={`Sort by ${column}`}
+                      title={`Sort by ${label}`}
                     >
-                      <span>{column}</span>
+                      <span>{label}</span>
                       <span className="table-sort-arrow" aria-hidden="true">
                         {sortColumn === column ? (sortDirection === "asc" ? "▲" : "▼") : "▴"}
                       </span>

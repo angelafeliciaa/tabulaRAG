@@ -447,6 +447,15 @@ export default function TableView() {
         <div className="table-area full-table-area" ref={tableAreaRef}>
           <DataTable
             columns={data.columns}
+            columnLabels={
+              data.columns_meta
+                ? data.columns_meta.map((m) =>
+                    valueMode === "original"
+                      ? (m.original_name ?? m.normalized_name)
+                      : m.normalized_name,
+                  )
+                : undefined
+            }
             rows={displayRows}
             rowIndices={filtered.rowIndices}
             sortable
