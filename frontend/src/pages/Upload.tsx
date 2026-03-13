@@ -1593,7 +1593,7 @@ export default function Upload() {
               Select or Drag &amp; Drop Your File(s) to Start Uploading
             </div>
             <div id={uploadDropDescriptionId} className="upload-subtitle">
-              Supported file formats: .csv, .tsv, and folders. Press Enter or Space to browse files.
+              Supported file formats: .csv, .tsv, and folders.
             </div>
           </div>
         ) : (
@@ -1753,13 +1753,11 @@ export default function Upload() {
                             canEditQueuedName && (queueNameIsEmpty || queueNameIsDuplicate)
                           }
                           aria-describedby={
-                            `${queueItemSubtitleId} ${queueItemStateId} ${
-                              queueNameIsEmpty || queueNameIsDuplicate
+                            `${queueItemSubtitleId} ${queueItemStateId} ${queueNameIsEmpty || queueNameIsDuplicate
                                 ? queueItemValidationId
                                 : ""
-                            } ${
-                              item.error ? queueItemUploadErrorId : ""
-                            }`.trim()
+                              } ${item.error ? queueItemUploadErrorId : ""
+                              }`.trim()
                           }
                         />
                         <div id={queueItemSubtitleId} className="upload-queue-file-subtitle">
@@ -1803,9 +1801,8 @@ export default function Upload() {
                         aria-valuenow={
                           item.phase === "error" ? undefined : Math.round(progressValue)
                         }
-                        aria-valuetext={`${stateLabel}. ${
-                          item.phase === "error" ? item.error || "Upload failed." : rowsLabel
-                        }`}
+                        aria-valuetext={`${stateLabel}. ${item.phase === "error" ? item.error || "Upload failed." : rowsLabel
+                          }`}
                       >
                         <div
                           className={progressFillClassName}
