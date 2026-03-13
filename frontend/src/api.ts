@@ -107,6 +107,8 @@ export interface TableSlice {
   columns: string[];
   columns_meta?: ColumnMeta[];
   rows: TableRow[];
+  /** When server-side sort is used, row indices for each row (for correct # column). */
+  row_indices?: number[];
 }
 
 export interface TableIndexStatus {
@@ -348,17 +350,26 @@ export type SliceOptions = {
   flatten?: boolean;
 };
 
+export type SliceSort = {
+  sortColumn: string;
+  sortDirection: "asc" | "desc";
+};
+
 export async function getSlice(
   datasetId: number,
   rowFrom: number,
   rowTo: number,
-  options?: SliceOptions,
+  options?: SliceOptions & { sort?: SliceSort | null },
 ): Promise<TableSlice> {
   const offset = Math.max(0, rowFrom);
   const limit = Math.max(1, rowTo - rowFrom);
   const url = new URL(`${API_BASE}/tables/${datasetId}/slice`);
   url.searchParams.set("offset", String(offset));
   url.searchParams.set("limit", String(limit));
+  if (options?.sort?.sortColumn) {
+    url.searchParams.set("sort_column", options.sort.sortColumn);
+    url.searchParams.set("sort_direction", options.sort.sortDirection);
+  }
 
   const res = await authFetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) {
@@ -373,6 +384,7 @@ export async function getSlice(
   const rows = flattenToNormalized
     ? rawRows.map(flattenRowToNormalized)
     : rawRows;
+  const row_indices = (data.rows || []).map((r) => r.row_index);
 
   return {
     dataset_id: data.dataset_id,
@@ -384,6 +396,7 @@ export async function getSlice(
     columns: data.columns,
     columns_meta: data.columns_meta,
     rows,
+    row_indices,
   };
 }
 

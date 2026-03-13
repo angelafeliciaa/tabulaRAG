@@ -11,6 +11,14 @@ type DataTableProps = {
   rowOffset?: number;
   rowIndices?: number[];
   sortable?: boolean;
+  /** When "server", rows are already sorted by the server; we show sort state and call onSortChange on header click (no client reorder). */
+  sortMode?: "client" | "server";
+  /** Current sort column when sortMode is "server". */
+  serverSortColumn?: string | null;
+  /** Current sort direction when sortMode is "server". */
+  serverSortDirection?: "asc" | "desc";
+  /** Called when user clicks sort header and sortMode is "server". Pass null column to clear sort. */
+  onSortChange?: (column: string | null, direction: "asc" | "desc") => void;
   formatCellValue?: (column: string, value: unknown) => string;
   onCellContextMenu?: (
     event: MouseEvent<HTMLTableCellElement>,
@@ -195,14 +203,22 @@ export default function DataTable({
   rowOffset = 0,
   rowIndices,
   sortable = false,
+  sortMode = "client",
+  serverSortColumn = null,
+  serverSortDirection = "asc",
+  onSortChange,
   formatCellValue,
   onCellContextMenu,
 }: DataTableProps) {
   const labels = columnLabels ?? columns;
-  const [sortColumn, setSortColumn] = useState<string | null>(null);
-  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const [clientSortColumn, setClientSortColumn] = useState<string | null>(null);
+  const [clientSortDirection, setClientSortDirection] = useState<SortDirection>("asc");
   const highlightedRows = new Set(highlight?.rows || []);
   const highlightedCols = new Set(highlight?.cols || []);
+
+  const isServerSort = sortable && sortMode === "server";
+  const sortColumn = isServerSort ? serverSortColumn : clientSortColumn;
+  const sortDirection = isServerSort ? serverSortDirection : clientSortDirection;
 
   const rowsForSort = sortRows != null && sortRows.length === rows.length ? sortRows : rows;
 
@@ -216,7 +232,7 @@ export default function DataTable({
       originalIndex: index,
     }));
 
-    if (!sortable || !sortColumn) {
+    if (!sortable || !sortColumn || isServerSort) {
       return entries;
     }
 
@@ -258,20 +274,30 @@ export default function DataTable({
 
       return left.originalIndex - right.originalIndex;
     });
-  }, [rowIndices, rowOffset, rows, rowsForSort, sortColumn, sortDirection, sortable]);
+  }, [rowIndices, rowOffset, rows, rowsForSort, sortColumn, sortDirection, sortable, isServerSort]);
 
-  function toggleSort(column: string) {
-    if (sortColumn !== column) {
-      setSortColumn(column);
-      setSortDirection("asc");
+  function handleSortClick(column: string) {
+    if (isServerSort && onSortChange) {
+      if (serverSortColumn !== column) {
+        onSortChange(column, "asc");
+      } else if (serverSortDirection === "asc") {
+        onSortChange(column, "desc");
+      } else {
+        onSortChange(null, "asc");
+      }
       return;
     }
-    if (sortDirection === "asc") {
-      setSortDirection("desc");
+    if (clientSortColumn !== column) {
+      setClientSortColumn(column);
+      setClientSortDirection("asc");
       return;
     }
-    setSortColumn(null);
-    setSortDirection("asc");
+    if (clientSortDirection === "asc") {
+      setClientSortDirection("desc");
+      return;
+    }
+    setClientSortColumn(null);
+    setClientSortDirection("asc");
   }
 
   return (
@@ -305,7 +331,7 @@ export default function DataTable({
                     <button
                       type="button"
                       className="table-sort-button"
-                      onClick={() => toggleSort(column)}
+                      onClick={() => handleSortClick(column)}
                       title={`Sort by ${label}`}
                     >
                       <span>{label}</span>

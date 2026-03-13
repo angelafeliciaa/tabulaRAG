@@ -144,6 +144,8 @@ export default function TableView() {
   const [showScrollHint, setShowScrollHint] = useState(false);
   const [tableAtBottom, setTableAtBottom] = useState(false);
   const [valueMode, setValueMode] = useState<ValueMode>("normalized");
+  const [sortColumn, setSortColumn] = useState<string | null>(null);
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const tableAreaRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -182,6 +184,8 @@ export default function TableView() {
     setCurrentPage(1);
     setPageInput("1");
     setSearchQuery("");
+    setSortColumn(null);
+    setSortDirection("asc");
   }, [numericDatasetId]);
 
   useEffect(() => {
@@ -195,8 +199,12 @@ export default function TableView() {
 
     const pageOffset = (currentPage - 1) * ROWS_PER_PAGE;
     const pageEndExclusive = pageOffset + ROWS_PER_PAGE;
+    const sort =
+      sortColumn != null
+        ? { sortColumn, sortDirection }
+        : null;
 
-    getSlice(numericDatasetId, pageOffset, pageEndExclusive, { flatten: false })
+    getSlice(numericDatasetId, pageOffset, pageEndExclusive, { flatten: false, sort })
       .then((slice) => {
         if (!mounted) {
           return;
@@ -225,7 +233,7 @@ export default function TableView() {
     return () => {
       mounted = false;
     };
-  }, [numericDatasetId, currentPage]);
+  }, [numericDatasetId, currentPage, sortColumn, sortDirection]);
 
   const normalizedSearch = searchQuery.trim().toLowerCase();
   const effectiveRowCount = Math.max(tableRowCount, Math.max(0, data?.row_count || 0));
@@ -248,10 +256,11 @@ export default function TableView() {
     if (!data) {
       return { rows: [] as Record<string, unknown>[], rowIndices: [] as number[] };
     }
+    const indices = data.row_indices ?? resolvedRows.map((_, index) => data.offset + index);
     if (!normalizedSearch) {
       return {
         rows: resolvedRows,
-        rowIndices: resolvedRows.map((_, index) => data.offset + index),
+        rowIndices: indices,
       };
     }
 
@@ -264,7 +273,7 @@ export default function TableView() {
       );
       if (matches) {
         nextRows.push(row);
-        nextRowIndices.push(data.offset + i);
+        nextRowIndices.push(indices[i]);
       }
     }
     return { rows: nextRows, rowIndices: nextRowIndices };
@@ -305,6 +314,9 @@ export default function TableView() {
   const sortRows = useMemo(() => {
     if (!data || normalizedRows.length === 0) {
       return undefined;
+    }
+    if (data.row_indices) {
+      return normalizedRows;
     }
     return filtered.rowIndices.map((ri) => normalizedRows[ri - data.offset]);
   }, [data, filtered.rowIndices, normalizedRows]);
@@ -471,6 +483,15 @@ export default function TableView() {
             sortRows={sortRows}
             rowIndices={filtered.rowIndices}
             sortable
+            sortMode="server"
+            serverSortColumn={sortColumn}
+            serverSortDirection={sortDirection}
+            onSortChange={(column, direction) => {
+              setSortColumn(column);
+              setSortDirection(direction);
+              setCurrentPage(1);
+              setPageInput("1");
+            }}
             onCellContextMenu={(event, payload) => {
               if (!dateColumns.has(payload.column) || !parseDateToDate(payload.value)) {
                 return;
