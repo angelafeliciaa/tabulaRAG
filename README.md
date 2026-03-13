@@ -1,6 +1,6 @@
 <h1 align="center">
   <img src="frontend/src/images/logo.png" alt="TabulaRAG logo" width="64" height="64" /></br>
-  tabulaRAG
+  TabulaRAG
 </h1>
 
 <p align="center">
