@@ -7,7 +7,6 @@ import {
   type TableSummary,
 } from "../api";
 import DataTable from "../components/DataTable";
-import returnIcon from "../images/return.png";
 
 type DateViewMode = "default" | "mm-dd-yyyy" | "mon-dd-yyyy";
 const ROWS_PER_PAGE = 500;
@@ -411,6 +410,24 @@ export default function TableView() {
     setPageInput(String(nextPage));
   }
 
+  function jumpToHighlight() {
+    if (highlightedRow === null) {
+      return;
+    }
+    const highlightPage = Math.floor(highlightedRow / ROWS_PER_PAGE) + 1;
+    if (safeCurrentPage !== highlightPage) {
+      setCurrentPage(highlightPage);
+      return;
+    }
+    const targetElement = document.querySelector(
+      `[data-row-index="${highlightedRow}"]`,
+    ) as HTMLElement | null;
+    if (!targetElement) {
+      return;
+    }
+    targetElement.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
   if (!datasetId) {
     return null;
   }
@@ -446,9 +463,28 @@ export default function TableView() {
               placeholder="Search for values"
               aria-label="Search rows"
             />
-            <Link className="table-view-back-link" to={returnPath}>
-              <img src={returnIcon} alt="" aria-hidden="true" />
-              {returnPath === "/" ? "Back to All Uploads" : "Back to Results"}
+            {highlightedRow !== null && (
+              <button
+                type="button"
+                className="table-view-context-btn"
+                onClick={jumpToHighlight}
+                aria-label="Jump to highlighted row"
+                title={`Jump to highlighted row ${highlightedRow}`}
+              >
+                Jump to Highlight
+              </button>
+            )}
+            {returnPath !== "/" && (
+              <Link className="table-view-icon-btn" to={returnPath} aria-label="Back to Results" title="Back to Results">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M14.7 5.3a1 1 0 0 1 0 1.4L10.41 11H20a1 1 0 1 1 0 2h-9.59l4.3 4.3a1 1 0 1 1-1.42 1.4l-6-6a1 1 0 0 1 0-1.4l6-6a1 1 0 0 1 1.41 0Z" fill="currentColor" />
+                </svg>
+              </Link>
+            )}
+            <Link className="table-view-icon-btn" to="/" aria-label="Back to All Uploads" title="Back to All Uploads">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M12 4.2 4 10v9a1 1 0 0 0 1 1h4.8a1 1 0 0 0 1-1v-4.2h2.4V19a1 1 0 0 0 1 1H19a1 1 0 0 0 1-1v-9l-8-5.8Z" fill="currentColor" />
+              </svg>
             </Link>
           </div>
         </div>
