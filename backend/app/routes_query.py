@@ -9,10 +9,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.retrieval import get_highlight, hybrid_search, resolve_dataset_context, smart_query
-from app.routes_tables import list_tables,get_cols_for_dataset
+from app.routes_tables import list_tables, get_cols_for_dataset
 import app.db as app_db
 from app.db import SessionLocal
-from app.typed_values import strip_internal_fields
+from app.typed_values import flatten_row_data_to_normalized, strip_internal_fields
 
 router = APIRouter()
 
@@ -42,12 +42,13 @@ def _is_sqlite() -> bool:
 
 
 def _column_json_text_expr(column_name: str) -> str:
+    """SQL expression for the normalized value of a column from row_data (supports {original, normalized} shape and legacy plain values)."""
     escaped = column_name.replace("'", "''")
     if _is_sqlite():
-        # SQLite JSON1 path to support arbitrary column names (including spaces).
         json_key = column_name.replace("\\", "\\\\").replace('"', '\\"')
-        return f"json_extract(row_data, '$.\"{json_key}\"')"
-    return f"(row_data::jsonb ->> '{escaped}')"
+        # Prefer .normalized for new shape; fallback to plain value for legacy
+        return f"COALESCE(json_extract(row_data, '$.\"{json_key}\".normalized'), json_extract(row_data, '$.\"{json_key}\"'))"
+    return f"COALESCE((row_data::jsonb -> '{escaped}') ->> 'normalized', row_data::jsonb ->> '{escaped}')"
 
 
 def _numeric_sql_expr(col: str) -> str:
@@ -472,7 +473,7 @@ def aggregate_dataset(body: AggregateRequest):
         raise HTTPException(status_code=404, detail="Dataset not found.")
 
     cols_payload = get_cols_for_dataset(body.dataset_id)
-    valid_columns = {col["name"] for col in cols_payload["columns"]}
+    valid_columns = {col["normalized_name"] for col in cols_payload["columns"]}
     if not valid_columns:
         raise HTTPException(status_code=400, detail="Dataset has no columns.")
 
@@ -566,7 +567,7 @@ def filter_dataset(body: FilterRequest):
         raise HTTPException(status_code=404, detail="Dataset not found.")
 
     cols_payload = get_cols_for_dataset(body.dataset_id)
-    valid_columns = {col["name"] for col in cols_payload["columns"]}
+    valid_columns = {col["normalized_name"] for col in cols_payload["columns"]}
     if not valid_columns:
         raise HTTPException(status_code=400, detail="Dataset has no columns.")
 
@@ -608,14 +609,14 @@ def filter_dataset(body: FilterRequest):
         item = dict(r)
         row_data = item.get("row_data")
         if isinstance(row_data, dict):
-            item["row_data"] = strip_internal_fields(row_data)
+            item["row_data"] = flatten_row_data_to_normalized(row_data)
         elif isinstance(row_data, str):
             try:
                 parsed = json.loads(row_data)
                 if isinstance(parsed, str):
                     parsed = json.loads(parsed)
                 item["row_data"] = (
-                    strip_internal_fields(parsed) if isinstance(parsed, dict) else {}
+                    flatten_row_data_to_normalized(parsed) if isinstance(parsed, dict) else {}
                 )
             except Exception:
                 item["row_data"] = {}

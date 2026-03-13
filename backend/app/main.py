@@ -198,29 +198,29 @@ def _validate_upload_content(upload: UploadFile) -> None:
 def _iter_rows(
     upload: UploadFile,
     has_header: bool,
-) -> Tuple[List[str], Iterable[List[str]], str]:
+) -> Tuple[List[str], List[str], Iterable[List[str]], str]:
+    """Return (raw_headers, normalized_headers, rows_iter, delimiter)."""
     validate_filename(upload.filename or "")
     _validate_upload_content(upload)
     detected_delimiter = _detect_delimiter(upload.filename)
     if detected_delimiter not in [",", "\t"]:
         raise HTTPException(status_code=400, detail="Delimiter must be comma or tab.")
 
-    # Use TextIOWrapper to read the uploaded file as text with UTF-8 encoding, which allows csv.reader to process it correctly.
     text_stream = io.TextIOWrapper(upload.file, encoding="utf-8-sig", newline="")
     reader = csv.reader(text_stream, delimiter=detected_delimiter)
 
     try:
-        first_row = next(
-            reader
-        )  # gets the first row of the file to determine headers and column count
+        first_row = next(reader)
     except StopIteration:
         raise HTTPException(status_code=400, detail="Empty file.")
 
     if has_header:
-        headers = _normalize_headers(first_row)
+        raw_headers = [str(h) if h is not None else "" for i, h in enumerate(first_row)]
+        normalized_headers = _normalize_headers(first_row)
         rows_iter = reader
     else:
-        headers = _normalize_headers([f"col_{i + 1}" for i in range(len(first_row))])
+        raw_headers = [f"col_{i + 1}" for i in range(len(first_row))]
+        normalized_headers = _normalize_headers(raw_headers)
 
         def row_iter() -> Iterable[List[str]]:
             yield first_row
@@ -228,11 +228,11 @@ def _iter_rows(
 
         rows_iter = row_iter()
 
-    return headers, rows_iter, detected_delimiter
+    return raw_headers, normalized_headers, rows_iter, detected_delimiter
 
 
-def _build_row_obj(headers: List[str], row: List[str]) -> dict:
-    return normalize_row_obj(headers, row)
+def _build_row_obj(normalized_headers: List[str], row: List[str]) -> dict:
+    return normalize_row_obj(normalized_headers, row, store_original=True)
 
 
 def _insert_rows_postgres_copy(
@@ -400,7 +400,7 @@ def ingest_table(
         raise HTTPException(status_code=400, detail="Missing filename.")
     validate_filename(file.filename)
 
-    headers, rows_iter, detected_delimiter = _iter_rows(file, has_header)
+    raw_headers, normalized_headers, rows_iter, detected_delimiter = _iter_rows(file, has_header)
 
     dataset_display_name = normalize_dataset_name_or_raise(
         dataset_name or os.path.splitext(file.filename)[0]
@@ -412,21 +412,24 @@ def ingest_table(
             source_filename=file.filename,
             delimiter=detected_delimiter,
             has_header=has_header,
-            column_count=len(headers),
+            column_count=len(normalized_headers),
             is_index_ready=False,
         )
-        db.add(
-            dataset
-        )  # adds the new dataset to the session, which assigns it an ID after flush() is called
-        db.flush()  # sends it to the database to get the generated ID, but does not commit yet so it can be rolled back if needed
+        db.add(dataset)
+        db.flush()
 
         db.add_all(
             [
-                DatasetColumn(dataset_id=dataset.id, column_index=i, name=col_name)
-                for i, col_name in enumerate(headers)
+                DatasetColumn(
+                    dataset_id=dataset.id,
+                    column_index=i,
+                    original_name=raw_headers[i] or None,
+                    normalized_name=normalized_headers[i],
+                )
+                for i in range(len(normalized_headers))
             ]
-        )  # creates a DatasetColumn object for each header and adds them to the session, associating them with the dataset by dataset_id
-        db.commit()  # commits the dataset to the database
+        )
+        db.commit()
         dataset_id = dataset.id
         dataset_name_value = dataset.name
         dataset_delimiter = dataset.delimiter
@@ -435,9 +438,9 @@ def ingest_table(
     row_count = 0
     try:
         if engine.dialect.name == "postgresql":
-            row_count = _insert_rows_postgres_copy(dataset_id, headers, rows_iter)
+            row_count = _insert_rows_postgres_copy(dataset_id, normalized_headers, rows_iter)
         else:
-            row_count = _insert_rows_batched(dataset_id, headers, rows_iter)
+            row_count = _insert_rows_batched(dataset_id, normalized_headers, rows_iter)
     except Exception as exc:
         with SessionLocal() as db:
             db.execute(text("DELETE FROM datasets WHERE id = :id"), {"id": dataset_id})
@@ -464,7 +467,7 @@ def ingest_table(
         "dataset_id": dataset_id,
         "name": dataset_name_value,
         "rows": row_count,
-        "columns": len(headers),
+        "columns": len(normalized_headers),
         "delimiter": dataset_delimiter,
         "has_header": dataset_has_header,
     }

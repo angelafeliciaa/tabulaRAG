@@ -42,12 +42,15 @@ def row_to_text(row_data: Dict[str, object]) -> str:
     """Serialize a row dict to a pipe-separated string for embedding.
 
     Example: {"name": "Alice", "age": "30"} -> "name: Alice | age: 30"
-    Skips keys whose values are None or empty string.
+    Skips keys whose values are None or empty string. Uses normalized value per column.
     """
+    from app.typed_values import get_normalized_value
+
     parts = []
-    for key, value in row_data.items():
+    for key in row_data:
         if is_internal_key(str(key)):
             continue
+        value = get_normalized_value(row_data, key)
         if value is None or value == "":
             continue
         parts.append(f"{key}: {value}")

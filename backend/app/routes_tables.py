@@ -8,7 +8,7 @@ from app.db import SessionLocal
 from app.index_jobs import clear_index_job, get_index_jobs
 from app.models import Dataset, DatasetColumn, DatasetRow
 from app.qdrant_client import delete_collection, get_collection_point_count
-from app.typed_values import strip_internal_fields
+from app.typed_values import flatten_row_data_to_normalized, strip_internal_fields
 from app.name_guard import normalize_dataset_name_or_raise
 
 router = APIRouter()
@@ -90,7 +90,14 @@ def get_cols_for_dataset(dataset_id: int):
 
     return {
         "dataset_id": dataset_id,
-        "columns": [{"column_index": c.column_index, "name": c.name} for c in columns],
+        "columns": [
+            {
+                "column_index": c.column_index,
+                "original_name": c.original_name,
+                "normalized_name": c.normalized_name,
+            }
+            for c in columns
+        ],
     }
 
 
@@ -128,7 +135,7 @@ def get_table_slice(
 
         columns = (
             db.execute(
-                select(DatasetColumn.name)
+                select(DatasetColumn)
                 .where(DatasetColumn.dataset_id == dataset_id)
                 .order_by(DatasetColumn.column_index)
             )
@@ -144,10 +151,17 @@ def get_table_slice(
             "column_count": dataset.column_count,
             "has_header": dataset.has_header,
             "rows": [
-                {"row_index": r.row_index, "data": _normalize_row_data(r.row_data)}
+                {
+                    "row_index": r.row_index,
+                    "data": flatten_row_data_to_normalized(r.row_data),
+                }
                 for r in rows
             ],
-            "columns": columns,
+            "columns": [c.normalized_name for c in columns],
+            "columns_meta": [
+                {"original_name": c.original_name, "normalized_name": c.normalized_name}
+                for c in columns
+            ],
         }
 
 

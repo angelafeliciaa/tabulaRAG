@@ -110,8 +110,11 @@ def test_db_dataset_record(client, test_engine):
 def test_db_columns_stored(client, test_engine):
     client.post("/ingest", files=make_csv("foo,bar,baz\n1,2,3\n"))
     with test_engine.connect() as conn:
-        cols = conn.execute(text("SELECT name FROM dataset_columns ORDER BY column_index")).fetchall()
-    assert [c.name for c in cols] == ["foo", "bar", "baz"]
+        cols = conn.execute(
+            text("SELECT original_name, normalized_name FROM dataset_columns ORDER BY column_index")
+        ).fetchall()
+    assert [c.normalized_name for c in cols] == ["foo", "bar", "baz"]
+    assert [c.original_name for c in cols] == ["foo", "bar", "baz"]
 
 
 def test_db_rows_stored(client, test_engine):
@@ -120,8 +123,11 @@ def test_db_rows_stored(client, test_engine):
         rows = conn.execute(text("SELECT row_data FROM dataset_rows")).fetchall()
     assert len(rows) == 1
     data = json.loads(rows[0].row_data)
-    assert data["name"] == "Alice"
-    assert data["age"] == "30"
+    # row_data stores { original, normalized } per column
+    assert data["name"]["normalized"] == "Alice"
+    assert data["name"]["original"] == "Alice"
+    assert data["age"]["normalized"] == "30"
+    assert data["age"]["original"] == "30"
 
 
 def test_list_tables_returns_ready_datasets_by_default(client):

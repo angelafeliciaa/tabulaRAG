@@ -127,14 +127,53 @@ def parse_date(value: Any) -> Optional[Dict[str, Any]]:
         return None
 
 
-def normalize_row_obj(headers: list[str], row: list[str]) -> Dict[str, Any]:
+def _cell_value(val: Any) -> Any:
+    """Normalize a cell value for storage: either legacy (plain str) or { original, normalized }."""
+    if isinstance(val, dict) and "normalized" in val:
+        return val
+    if isinstance(val, dict) and "n" in val:
+        return {"original": val.get("o"), "normalized": val.get("n")}
+    return {"original": val, "normalized": val}
+
+
+def get_normalized_value(row_data: Dict[str, Any], column: str) -> Any:
+    """Return the normalized value for a column. Supports legacy (plain string) and new shape."""
+    val = row_data.get(column)
+    if isinstance(val, dict) and "normalized" in val:
+        return val["normalized"]
+    if isinstance(val, dict) and "n" in val:
+        return val["n"]
+    return val
+
+
+def get_original_value(row_data: Dict[str, Any], column: str) -> Any:
+    """Return the original raw value for a column. Supports legacy (returns same as normalized) and new shape."""
+    val = row_data.get(column)
+    if isinstance(val, dict) and "original" in val:
+        return val["original"]
+    if isinstance(val, dict) and "o" in val:
+        return val["o"]
+    return val
+
+
+def normalize_row_obj(
+    normalized_headers: list[str],
+    row: list[str],
+    *,
+    store_original: bool = True,
+) -> Dict[str, Any]:
+    """Build row_data: keys are normalized column names; values are { original, normalized } or legacy plain normalized."""
     result: Dict[str, Any] = {}
     typed: Dict[str, Dict[str, Any]] = {}
 
-    for i in range(len(headers)):
-        key = headers[i]
-        normalized = normalize_text_value(row[i] if i < len(row) else None)
-        result[key] = normalized
+    for i in range(len(normalized_headers)):
+        key = normalized_headers[i]
+        raw = row[i] if i < len(row) else None
+        normalized = normalize_text_value(raw)
+        if store_original:
+            result[key] = {"original": raw if raw is not None else None, "normalized": normalized}
+        else:
+            result[key] = normalized
         if normalized is None:
             continue
 
@@ -170,8 +209,18 @@ def get_numeric_value(row_data: Dict[str, Any], column: str) -> Optional[float]:
             return float(raw)
         except (TypeError, ValueError):
             return None
-    return parse_number(row_data.get(column))
+    return parse_number(get_normalized_value(row_data, column))
 
 
 def strip_internal_fields(row_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Remove __typed__ and other internal keys. Column values stay as { original, normalized } or plain."""
     return {k: v for k, v in row_data.items() if not is_internal_key(k)}
+
+
+def flatten_row_data_to_normalized(row_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a dict keyed by column with only normalized values (for API display where a single value per cell is expected)."""
+    return {
+        k: get_normalized_value(row_data, k)
+        for k in row_data
+        if not is_internal_key(k)
+    }
