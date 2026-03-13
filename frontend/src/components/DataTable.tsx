@@ -3,6 +3,7 @@ import { type MouseEvent, useMemo, useState } from "react";
 type DataTableProps = {
   columns: string[];
   rows: Record<string, unknown>[];
+  caption?: string;
   highlight?: { rows: number[]; cols: string[] };
   rowOffset?: number;
   rowIndices?: number[];
@@ -185,6 +186,7 @@ function inferSortKind(rows: Record<string, unknown>[], column: string): SortKin
 export default function DataTable({
   columns,
   rows,
+  caption,
   highlight,
   rowOffset = 0,
   rowIndices,
@@ -269,16 +271,26 @@ export default function DataTable({
     <div className="card table-card">
       <div className="table-scroll">
         <table>
+          <caption className="sr-only">
+            {caption || `Data table with ${displayRows.length} rows and ${columns.length} columns.`}
+          </caption>
           <thead>
             <tr>
-              <th className="mono">#</th>
+              <th scope="col" className="mono" aria-label="Row number">
+                #
+              </th>
               {columns.map((column) => {
                 if (!sortable) {
-                  return <th key={column}>{column}</th>;
+                  return (
+                    <th key={column} scope="col">
+                      {column}
+                    </th>
+                  );
                 }
                 return (
                   <th
                     key={column}
+                    scope="col"
                     aria-sort={
                       sortColumn === column
                         ? sortDirection === "asc"
@@ -308,8 +320,17 @@ export default function DataTable({
               const isHighlightedRow = highlightedRows.has(absoluteRowIndex);
 
               return (
-                <tr key={absoluteRowIndex} data-row-index={absoluteRowIndex}>
-                  <td className={`mono ${isHighlightedRow ? "hl" : ""}`}>{absoluteRowIndex}</td>
+                <tr
+                  key={absoluteRowIndex}
+                  data-row-index={absoluteRowIndex}
+                  className={isHighlightedRow ? "table-row-highlighted" : undefined}
+                >
+                  <th
+                    scope="row"
+                    className={`mono ${isHighlightedRow ? "hl" : ""}`}
+                  >
+                    {absoluteRowIndex}
+                  </th>
                   {columns.map((column) => {
                     const isHighlightedCell =
                       isHighlightedRow && highlightedCols.has(column);

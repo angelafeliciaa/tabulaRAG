@@ -146,7 +146,9 @@ export default function VirtualTableView() {
   if (err) {
     return (
       <div className="page-stack">
-        <p className="error">{err}</p>
+        <p className="error" role="alert">
+          {err}
+        </p>
       </div>
     );
   }
@@ -163,6 +165,7 @@ export default function VirtualTableView() {
           <DataTable
             columns={columns}
             rows={rows}
+            caption={resultTitle}
           />
         </div>
       )}
