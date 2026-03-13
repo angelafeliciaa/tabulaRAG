@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   aggregate,
@@ -22,6 +22,7 @@ export default function VirtualTableView() {
   const [resultTitle, setResultTitle] = useState<string>("Result");
   const [resultSubtitle, setResultSubtitle] = useState<string>("");
   const [isFilterResult, setIsFilterResult] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   type AggregatePayload = {
     dataset_id: number;
@@ -148,6 +149,40 @@ export default function VirtualTableView() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search]);
 
+  useEffect(() => {
+    setSearchQuery("");
+  }, [location.search]);
+
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    if (!normalizedSearch) {
+      return {
+        rows,
+        rowIndices: rows.map((row, index) =>
+          typeof row.row_index === "number" ? Number(row.row_index) : index,
+        ),
+      };
+    }
+
+    const nextRows: (Record<string, unknown> & { __highlight_id?: string })[] = [];
+    const nextRowIndices: number[] = [];
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      const matches = Object.values(row).some((value) =>
+        String(value ?? "").toLowerCase().includes(normalizedSearch),
+      );
+      if (!matches) {
+        continue;
+      }
+      nextRows.push(row);
+      nextRowIndices.push(
+        typeof row.row_index === "number" ? Number(row.row_index) : i,
+      );
+    }
+
+    return { rows: nextRows, rowIndices: nextRowIndices };
+  }, [rows, normalizedSearch]);
+
   if (err) {
     return (
       <div className="page-stack">
@@ -159,15 +194,39 @@ export default function VirtualTableView() {
   return (
     <div className="page-stack virtual-results-page">
       <div className="card" style={{ marginBottom: 12 }}>
-        <div className="result-title">{resultTitle}</div>
-        <div className="result-subtitle">{resultSubtitle}</div>
+        <div className="row virtual-results-header-row">
+          <div>
+            <div className="result-title">{resultTitle}</div>
+            <div className="result-subtitle">{resultSubtitle}</div>
+            <div className="small">
+              Showing {filtered.rows.length.toLocaleString()} of {rows.length.toLocaleString()} row(s)
+            </div>
+          </div>
+          <div className="table-view-tools virtual-results-tools">
+            <input
+              type="text"
+              className="table-view-search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search for values"
+              aria-label="Search results rows"
+            />
+            <Link className="table-view-icon-btn" to="/" aria-label="Back to All Uploads" title="Back to All Uploads">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M12 4.2 4 10v9a1 1 0 0 0 1 1h4.8a1 1 0 0 0 1-1v-4.2h2.4V19a1 1 0 0 0 1 1H19a1 1 0 0 0 1-1v-9l-8-5.8Z" fill="currentColor" />
+              </svg>
+            </Link>
+          </div>
+        </div>
       </div>
 
-      {rows.length > 0 && (
+      {filtered.rows.length > 0 && (
         <div className="table-area">
           <DataTable
             columns={columns}
-            rows={rows}
+            rows={filtered.rows}
+            rowIndices={filtered.rowIndices}
+            sortable
             rowAction={
               isFilterResult
                 ? ({ row }) => {
