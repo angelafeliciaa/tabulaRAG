@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { exchangeGithubCode, exchangeGoogleCode, verifyOAuthState } from "../api";
 
@@ -15,13 +15,10 @@ export default function AuthCallback({ onLogin }: AuthCallbackProps) {
   const state = params.get("state");
   const provider = params.get("provider") || "github";
 
-  useEffect(() => {
-    if (!code) return;
+  const stateValid = useMemo(() => verifyOAuthState(state), [state]);
 
-    if (!verifyOAuthState(state)) {
-      setError("Invalid OAuth state. This may be a CSRF attack. Please try again.");
-      return;
-    }
+  useEffect(() => {
+    if (!code || !stateValid) return;
 
     async function exchange() {
       try {
@@ -38,13 +35,30 @@ export default function AuthCallback({ onLogin }: AuthCallbackProps) {
     }
 
     exchange();
-  }, [code, state, provider, onLogin, navigate]);
+  }, [code, stateValid, provider, onLogin, navigate]);
 
   if (!code) {
     return (
       <div className="login-page">
         <div className="login-card">
           <p className="login-error">No authorization code received.</p>
+          <button
+            type="button"
+            className="login-btn"
+            onClick={() => navigate("/", { replace: true })}
+          >
+            Back to login
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!stateValid) {
+    return (
+      <div className="login-page">
+        <div className="login-card">
+          <p className="login-error">Invalid OAuth state. Please try again.</p>
           <button
             type="button"
             className="login-btn"
