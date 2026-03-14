@@ -9,74 +9,94 @@ import {
 import DataTable from "../components/DataTable";
 import openIcon from "../images/open.png";
 
+const MAX_MULTI_HIGHLIGHT_ROWS = 1000;
+
+type FilterConditionPayload = {
+  column: string;
+  operator: string;
+  value?: string;
+  logical_operator?: "AND" | "OR";
+};
+
+type AggregatePayload = {
+  dataset_id: number;
+  operation: string;
+  metric_column?: string;
+  group_by?: string;
+  filters?: FilterConditionPayload[];
+  limit?: number;
+};
+
+type FilterPayload = {
+  mode: "filter";
+  dataset_id: number;
+  filters?: FilterConditionPayload[];
+  limit?: number;
+  offset?: number;
+};
+
+type TableRow = Record<string, unknown> & {
+  __highlight_id?: string;
+  __row_index?: number;
+  __dataset_id?: number;
+  __drilldown_filters?: FilterConditionPayload[];
+  __drilldown_label?: string;
+};
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function encodePayload(value: unknown): string {
+  const raw = JSON.stringify(value);
+  const bytes = new TextEncoder().encode(raw);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function decodePayload(encoded: string): AggregatePayload | FilterPayload {
+  const normalized = encoded.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = normalized.length % 4;
+  const padded = pad ? normalized + "=".repeat(4 - pad) : normalized;
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  const decoded = new TextDecoder().decode(bytes);
+  return JSON.parse(decoded);
+}
+
+function formatFilterSummary(filters?: FilterConditionPayload[]): string {
+  if (!filters || filters.length === 0) return "no filters";
+  return filters
+    .map((f, idx) => {
+      const clause =
+        f.operator === "IS NULL" || f.operator === "IS NOT NULL"
+          ? `${f.column} ${f.operator}`
+          : `${f.column} ${f.operator} ${f.value ?? ""}`.trim();
+      if (idx === 0) return clause;
+      return `${(f.logical_operator || "AND").toUpperCase()} ${clause}`;
+    })
+    .join(" ");
 }
 
 export default function VirtualTableView() {
   const location = useLocation();
   const [err, setErr] = useState<string | null>(null);
   const [columns, setColumns] = useState<string[]>([]);
-  const [rows, setRows] = useState<(Record<string, unknown> & {
-    __highlight_id?: string;
-    __row_index?: number;
-    __dataset_id?: number;
-  })[]>([]);
+  const [rows, setRows] = useState<TableRow[]>([]);
   const [resultTitle, setResultTitle] = useState<string>("Result");
   const [resultSubtitle, setResultSubtitle] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
-
-  type AggregatePayload = {
-    dataset_id: number;
-    operation: string;
-    metric_column?: string;
-    group_by?: string;
-    filters?: FilterConditionPayload[];
-    limit?: number;
-  };
-
-  type FilterConditionPayload = {
-    column: string;
-    operator: string;
-    value?: string;
-    logical_operator?: "AND" | "OR";
-  };
-
-  type FilterPayload = {
-    mode: "filter";
-    dataset_id: number;
-    filters?: FilterConditionPayload[];
-    limit?: number;
-    offset?: number;
-  };
-
-  function decodePayload(encoded: string): AggregatePayload | FilterPayload {
-    const normalized = encoded.replace(/-/g, "+").replace(/_/g, "/");
-    const pad = normalized.length % 4;
-    const padded = pad ? normalized + "=".repeat(4 - pad) : normalized;
-    return JSON.parse(atob(padded));
-  }
-
-  function formatFilterSummary(filters?: FilterConditionPayload[]): string {
-    if (!filters || filters.length === 0) return "no filters";
-    return filters
-      .map((f, idx) => {
-        const clause =
-          f.operator === "IS NULL" || f.operator === "IS NOT NULL"
-            ? `${f.column} ${f.operator}`
-            : `${f.column} ${f.operator} ${f.value ?? ""}`.trim();
-        if (idx === 0) return clause;
-        return `${(f.logical_operator || "AND").toUpperCase()} ${clause}`;
-      })
-      .join(" ");
-  }
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const encoded = params.get("q");
     if (!encoded) {
-      setErr("This URL is not valid or no longer valid");      return;
+      setErr("This URL is not valid or no longer valid");
+      return;
     }
 
     let payload: AggregatePayload | FilterPayload;
@@ -84,8 +104,11 @@ export default function VirtualTableView() {
     try {
       payload = decodePayload(encoded);
     } catch {
-      setErr("This URL is not valid or no longer valid");      return;
+      setErr("This URL is not valid or no longer valid");
+      return;
     }
+
+    setErr(null);
 
     if ("mode" in payload && payload.mode === "filter") {
       filterRows(payload)
@@ -99,10 +122,9 @@ export default function VirtualTableView() {
               columnSet.add(key);
             }
           }
-          const cols = Array.from(columnSet);
-          setColumns(cols);
+          setColumns(Array.from(columnSet));
 
-          const mappedRows = result.rowsResult.map((item) => ({
+          const mappedRows: TableRow[] = result.rowsResult.map((item) => ({
             row_index: item.row_index,
             __row_index: item.row_index,
             __dataset_id: result.dataset_id,
@@ -119,7 +141,8 @@ export default function VirtualTableView() {
       .then((result: AggregateResponse) => {
         const aggregatePayload = payload as AggregatePayload;
 
-        const operationLabel = aggregatePayload.operation.charAt(0).toUpperCase() + aggregatePayload.operation.slice(1);
+        const operationLabel =
+          aggregatePayload.operation.charAt(0).toUpperCase() + aggregatePayload.operation.slice(1);
         const metricCol = result.metric_column ?? "aggregate_value";
 
         const filterParts = aggregatePayload.filters
@@ -133,31 +156,48 @@ export default function VirtualTableView() {
           ? `${operationLabel} ${metricCol} by ${result.group_by_column}`
           : `${operationLabel} ${metricCol}`;
         setResultTitle(`Aggregate result: ${aggregateSummary}`);
-        setResultSubtitle(filterParts ? `Filters: ${filterParts}` : `${result.rowsResult.length} row(s)`);
+        setResultSubtitle(filterParts ? `Filters: ${filterParts}` : "");
 
         const cols: string[] = [];
         if (result.group_by_column) cols.push(result.group_by_column);
         cols.push(metricColLabel);
         setColumns(cols);
 
-        const remapped = result.rowsResult.map((row) => {
+        const remapped: TableRow[] = result.rowsResult.map((row) => {
           const source = row as Record<string, unknown>;
-          const r: Record<string, unknown> = {};
-          if (result.group_by_column) r[result.group_by_column] = row.group_value;
-          r[metricColLabel] = row.aggregate_value;
-          if (typeof source.row_index === "number" && Number.isFinite(source.row_index)) {
-            r.__row_index = Math.trunc(source.row_index);
+          const groupValue = source.group_value;
+          const nextRow: TableRow = {};
+          if (result.group_by_column) {
+            nextRow[result.group_by_column] = row.group_value;
           }
-          if (typeof source.highlight_id === "string" && source.highlight_id.trim()) {
-            r.__highlight_id = source.highlight_id;
+          nextRow[metricColLabel] = row.aggregate_value;
+          nextRow.__dataset_id = result.dataset_id;
+
+          const drilldownFilters = [...(aggregatePayload.filters || [])];
+          if (result.group_by_column) {
+            if (groupValue === null || groupValue === undefined) {
+              drilldownFilters.push({
+                column: result.group_by_column,
+                operator: "IS NULL",
+              });
+              nextRow.__drilldown_label = "NULL";
+            } else {
+              drilldownFilters.push({
+                column: result.group_by_column,
+                operator: "=",
+                value: String(groupValue),
+              });
+              nextRow.__drilldown_label = String(groupValue);
+            }
+          } else {
+            nextRow.__drilldown_label = "All matching rows";
           }
-          r.__dataset_id = result.dataset_id;
-          return r;
+          nextRow.__drilldown_filters = drilldownFilters;
+          return nextRow;
         });
         setRows(remapped);
       })
       .catch((error: unknown) => setErr(getErrorMessage(error)));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search]);
 
   useEffect(() => {
@@ -181,16 +221,12 @@ export default function VirtualTableView() {
       };
     }
 
-    const nextRows: (Record<string, unknown> & {
-      __highlight_id?: string;
-      __row_index?: number;
-      __dataset_id?: number;
-    })[] = [];
+    const nextRows: TableRow[] = [];
     const nextRowIndices: number[] = [];
     for (let i = 0; i < rows.length; i += 1) {
       const row = rows[i];
       const matches = Object.values(row).some((value) =>
-        String(value ?? "").toLowerCase().includes(normalizedSearch)
+        String(value ?? "").toLowerCase().includes(normalizedSearch),
       );
       if (!matches) {
         continue;
@@ -211,17 +247,15 @@ export default function VirtualTableView() {
   const hasRowDrilldown = useMemo(
     () =>
       filtered.rows.some((row) => {
-        const sourceRow =
-          typeof row.__row_index === "number"
-            ? row.__row_index
-            : typeof row.row_index === "number"
-              ? Number(row.row_index)
-              : null;
         const sourceDataset =
           typeof row.__dataset_id === "number"
             ? row.__dataset_id
             : null;
-        return sourceDataset !== null && sourceRow !== null;
+        const hasSingleRow =
+          typeof row.__row_index === "number"
+          || typeof row.row_index === "number";
+        const hasMultiRow = Array.isArray(row.__drilldown_filters);
+        return sourceDataset !== null && (hasSingleRow || hasMultiRow);
       }),
     [filtered.rows],
   );
@@ -275,16 +309,36 @@ export default function VirtualTableView() {
             rowAction={
               hasRowDrilldown
                 ? ({ row }) => {
+                  const sourceDataset =
+                    typeof row.__dataset_id === "number"
+                      ? row.__dataset_id
+                      : null;
                   const sourceRow =
                     typeof row.__row_index === "number"
                       ? row.__row_index
                       : typeof row.row_index === "number"
                         ? Number(row.row_index)
                         : null;
-                  const sourceDataset =
-                    typeof row.__dataset_id === "number"
-                      ? row.__dataset_id
-                      : null;
+
+                  if (sourceDataset !== null && Array.isArray(row.__drilldown_filters)) {
+                    const label = String(row.__drilldown_label || "All matching rows");
+                    const spec = encodePayload({
+                      dataset_id: sourceDataset,
+                      filters: row.__drilldown_filters,
+                      label,
+                      max_rows: MAX_MULTI_HIGHLIGHT_ROWS,
+                    });
+                    return (
+                      <Link
+                        className="result-row-open-link"
+                        to={`/tables/${sourceDataset}?highlight_mode=multi&highlight_spec=${encodeURIComponent(spec)}&return_to=${encodeURIComponent(`${location.pathname}${location.search}`)}`}
+                        aria-label={`Open ${label} rows in full table`}
+                        title="Open in full table"
+                      >
+                        <img src={openIcon} alt="" aria-hidden="true" />
+                      </Link>
+                    );
+                  }
 
                   if (sourceDataset !== null && sourceRow !== null) {
                     return (

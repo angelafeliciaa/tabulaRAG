@@ -441,3 +441,21 @@ export async function filterRows(params: unknown): Promise<FilterResponse> {
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
+
+export type FilterRowIndicesResponse = {
+  dataset_id: number;
+  row_indices: number[];
+  total_match_count: number;
+  truncated: boolean;
+  sql_query: string;
+};
+
+export async function filterRowIndices(params: unknown): Promise<FilterRowIndicesResponse> {
+  const res = await authFetch(`${API_BASE}/filter/row-indices`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

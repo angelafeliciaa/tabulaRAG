@@ -2255,6 +2255,37 @@ ul {
     font-weight: 400;
 }
 
+.table-view-highlight-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg-elev-2);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0;
+    box-shadow: none;
+}
+
+.table-view-highlight-nav-btn:hover,
+.table-view-highlight-nav-btn:focus,
+.table-view-highlight-nav-btn:focus-visible {
+    transform: none;
+    box-shadow: none;
+    background: var(--bg-elev);
+    border-color: var(--border-soft);
+}
+
+.table-view-highlight-nav-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+
 .full-table-page {
     padding-top: 72px;
 }

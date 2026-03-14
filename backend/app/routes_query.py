@@ -329,6 +329,22 @@ class FilterResponse(BaseModel):
     )
 
 
+class FilterRowIndicesRequest(BaseModel):
+    dataset_id: int = Field(
+        description="ID of the dataset to filter. Call GET /tables first to discover valid IDs."
+    )
+    filters: Optional[List[FilterCondition]] = None
+    max_rows: int = 1000
+
+
+class FilterRowIndicesResponse(BaseModel):
+    dataset_id: int
+    row_indices: List[int]
+    total_match_count: int
+    truncated: bool
+    sql_query: str
+
+
 class HighlightResponse(BaseModel):
     highlight_id: str
     dataset_id: int
@@ -641,6 +657,69 @@ def filter_dataset(body: FilterRequest):
         row_count=int(row_count_raw or 0),
         sql_query=_render_sql(sql, params),
         url=url,
+    )
+
+
+@router.post(
+    "/filter/row-indices",
+    response_model=FilterRowIndicesResponse,
+    summary="Resolve row indices for a structured filter",
+    description="Apply structured filters to a dataset and return matching row indices.",
+)
+def filter_row_indices(body: FilterRowIndicesRequest):
+    with SessionLocal() as db:
+        row = db.execute(
+            text("SELECT id FROM datasets WHERE id = :id"),
+            {"id": body.dataset_id},
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Dataset not found.")
+
+    cols_payload = get_cols_for_dataset(body.dataset_id)
+    valid_columns = {str(col["name"]) for col in cols_payload["columns"] if col.get("name")}
+    if not valid_columns:
+        raise HTTPException(status_code=400, detail="Dataset has no columns.")
+
+    max_rows = max(1, min(int(body.max_rows), 1000))
+    params: Dict[str, Any] = {
+        "dataset_id": body.dataset_id,
+        "max_rows": max_rows,
+    }
+
+    where_clauses = _build_where_clauses(
+        filters=body.filters,
+        valid_columns=valid_columns,
+        params=params,
+    )
+
+    sql = """
+        SELECT row_index
+        FROM dataset_rows
+        WHERE {where_sql}
+        ORDER BY row_index ASC
+        LIMIT :max_rows
+    """.format(where_sql=" AND ".join(where_clauses))
+
+    count_sql = """
+        SELECT COUNT(*) AS row_count
+        FROM dataset_rows
+        WHERE {where_sql}
+    """.format(where_sql=" AND ".join(where_clauses))
+
+    with SessionLocal() as db:
+        rows_raw = db.execute(text(sql), params).mappings().all()
+        row_count_raw = db.execute(text(count_sql), params).scalar_one()
+
+    row_indices = [int(item["row_index"]) for item in rows_raw if item.get("row_index") is not None]
+    total_match_count = int(row_count_raw or 0)
+    truncated = total_match_count > len(row_indices)
+
+    return FilterRowIndicesResponse(
+        dataset_id=body.dataset_id,
+        row_indices=row_indices,
+        total_match_count=total_match_count,
+        truncated=truncated,
+        sql_query=_render_sql(sql, params),
     )
 
 
