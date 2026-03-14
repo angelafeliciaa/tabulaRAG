@@ -6,3 +6,4 @@ httpx
 python-multipart
 qdrant-client[fastembed]
 fastapi-mcp
+pyjwt

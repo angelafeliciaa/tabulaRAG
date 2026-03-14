@@ -21,7 +21,7 @@ def _ingest(client):
 
 def test_query_dataset_not_found(client):
     resp = client.post(
-        "/query",
+        "/semantic_query",
         json={"question": "Who lives in London?", "dataset_id": 9999},
     )
     assert resp.status_code == 404
@@ -29,7 +29,7 @@ def test_query_dataset_not_found(client):
 
 
 def test_query_missing_question(client):
-    resp = client.post("/query", json={"dataset_id": 1})
+    resp = client.post("/semantic_query", json={"dataset_id": 1})
     assert resp.status_code == 422
 
 
@@ -39,7 +39,7 @@ def test_query_top_k_optional(client):
     with patch("app.retrieval.search_vectors", return_value=[]), \
          patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
         resp = client.post(
-            "/query",
+            "/semantic_query",
             json={"question": "Who lives in London?", "dataset_id": dataset_id},
         )
 
@@ -54,7 +54,7 @@ def test_query_strict_mode_requires_dataset_id(client, monkeypatch):
     with patch("app.retrieval.search_vectors", return_value=[]), \
          patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
         resp = client.post(
-            "/query",
+            "/semantic_query",
             json={"question": "Who lives in London?"},
         )
 
@@ -72,7 +72,7 @@ def test_query_strict_mode_rejects_invalid_dataset_id(client, monkeypatch):
     with patch("app.retrieval.search_vectors", return_value=[]), \
          patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
         resp = client.post(
-            "/query",
+            "/semantic_query",
             json={"question": "Who lives in London?", "dataset_id": dataset_id + 9999},
         )
 
@@ -95,7 +95,7 @@ def test_query_auto_resolves_dataset_from_question(client):
     with patch("app.retrieval.search_vectors", return_value=[]), \
          patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
         resp = client.post(
-            "/query",
+            "/semantic_query",
             json={"question": "From the Chocolate table, how many entries are there?"},
         )
 
@@ -118,7 +118,7 @@ def test_query_invalid_dataset_id_resolves_from_name_hint(client):
     with patch("app.retrieval.search_vectors", return_value=[]), \
          patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
         resp = client.post(
-            "/query",
+            "/semantic_query",
             json={
                 "dataset_id": dataset_id + 999,
                 "question": "From the Chocolate table, what product has the most boxes shipped?",
@@ -149,7 +149,7 @@ def test_query_semantic_results(client):
     with patch("app.retrieval.search_vectors", return_value=mock_hits), \
          patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
         resp = client.post(
-            "/query",
+            "/semantic_query",
             json={"question": "Who lives in London?", "dataset_id": dataset_id},
         )
 
@@ -169,7 +169,7 @@ def test_query_with_filters(client):
     with patch("app.retrieval.search_vectors", return_value=[]), \
          patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
         resp = client.post(
-            "/query",
+            "/semantic_query",
             json={
                 "question": "tell me about this person",
                 "dataset_id": dataset_id,
@@ -202,7 +202,7 @@ def test_query_aggregate_answer_with_source_links(client):
     with patch("app.retrieval.search_vectors", return_value=[]), \
          patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
         resp = client.post(
-            "/query",
+            "/semantic_query",
             json={
                 "question": "What product has the most amount of boxes shipped?",
                 "dataset_id": dataset_id,
@@ -238,7 +238,7 @@ def test_query_rank_single_row_returns_name_for_who_question(client):
     with patch("app.retrieval.search_vectors", return_value=[]), \
          patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
         resp = client.post(
-            "/query",
+            "/semantic_query",
             json={
                 "question": "Who sold the most boxes in one deal?",
                 "dataset_id": dataset_id,
@@ -273,7 +273,7 @@ def test_query_highest_amount_in_a_day_prefers_single_row_not_grouped_total(clie
     with patch("app.retrieval.search_vectors", return_value=[]), \
          patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
         resp = client.post(
-            "/query",
+            "/semantic_query",
             json={
                 "question": "What is the highest sales amount made in a day?",
                 "dataset_id": dataset_id,
@@ -310,7 +310,7 @@ def test_query_fail_closed_when_verification_fails(client, monkeypatch):
          patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]), \
          patch("app.retrieval.get_highlight", return_value=None):
         resp = client.post(
-            "/query",
+            "/semantic_query",
             json={"question": "Who lives in London?", "dataset_id": dataset_id},
         )
 
@@ -336,7 +336,7 @@ def test_query_sum_with_natural_language_filter(client):
     with patch("app.retrieval.search_vectors", return_value=[]), \
          patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
         resp = client.post(
-            "/query",
+            "/semantic_query",
             json={
                 "question": "How many boxes shipped for Dark?",
                 "dataset_id": dataset_id,
@@ -369,7 +369,7 @@ def test_query_count_with_natural_language_filter(client):
     with patch("app.retrieval.search_vectors", return_value=[]), \
          patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
         resp = client.post(
-            "/query",
+            "/semantic_query",
             json={
                 "question": "How many entries are in UK?",
                 "dataset_id": dataset_id,
@@ -383,6 +383,130 @@ def test_query_count_with_natural_language_filter(client):
     assert data["answer_details"]["metric_value"] == 2
     assert data["answer_details"]["filters"]["Country"] == "UK"
     assert "Link: http://localhost:5173/highlight/" in data["final_response"]
+
+
+# ── POST /filter ──────────────────────────────────────────────────
+
+def test_filter_rows_success(client):
+    dataset_id = _ingest(client)
+
+    resp = client.post(
+        "/filter",
+        json={
+            "dataset_id": dataset_id,
+            "filters": [{"column": "city", "operator": "=", "value": "London"}],
+            "limit": 10,
+            "offset": 0,
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["dataset_id"] == dataset_id
+    assert data["row_count"] == 1
+    assert len(data["rowsResult"]) == 1
+    assert data["rowsResult"][0]["row_data"]["city"] == "London"
+    assert data["url"].startswith("http://localhost:5173/tables/virtual?q=")
+
+
+def test_filter_between_numeric(client):
+    csv_content = (
+        b"name,number_of_rooms\n"
+        b"A,2\n"
+        b"B,3\n"
+        b"C,5\n"
+        b"D,7\n"
+    )
+    resp = client.post(
+        "/ingest",
+        files={"file": ("rooms.csv", csv_content, "text/csv")},
+    )
+    dataset_id = resp.json()["dataset_id"]
+
+    resp = client.post(
+        "/filter",
+        json={
+            "dataset_id": dataset_id,
+            "filters": [{"column": "number_of_rooms", "operator": "BETWEEN", "value": "3,6"}],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["row_count"] == 2
+    names = [row["row_data"]["name"] for row in data["rowsResult"]]
+    assert names == ["B", "C"]
+
+
+def test_filter_not_like(client):
+    csv_content = (
+        b"city\n"
+        b"Paris\n"
+        b"Tokyo\n"
+        b"Berlin\n"
+    )
+    resp = client.post(
+        "/ingest",
+        files={"file": ("cities.csv", csv_content, "text/csv")},
+    )
+    dataset_id = resp.json()["dataset_id"]
+
+    resp = client.post(
+        "/filter",
+        json={
+            "dataset_id": dataset_id,
+            "filters": [{"column": "city", "operator": "NOT LIKE", "value": "%is"}],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    cities = [row["row_data"]["city"] for row in data["rowsResult"]]
+    assert cities == ["Tokyo", "Berlin"]
+
+
+def test_filter_or_conditions(client):
+    csv_content = (
+        b"city,year_listed\n"
+        b"Paris,2010\n"
+        b"London,2014\n"
+        b"Rome,2008\n"
+    )
+    resp = client.post(
+        "/ingest",
+        files={"file": ("listings.csv", csv_content, "text/csv")},
+    )
+    dataset_id = resp.json()["dataset_id"]
+
+    resp = client.post(
+        "/filter",
+        json={
+            "dataset_id": dataset_id,
+            "filters": [
+                {"column": "city", "operator": "=", "value": "Paris"},
+                {
+                    "column": "year_listed",
+                    "operator": ">",
+                    "value": "2012",
+                    "logical_operator": "OR",
+                },
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    cities = [row["row_data"]["city"] for row in data["rowsResult"]]
+    assert cities == ["Paris", "London"]
+
+
+def test_filter_dataset_not_found(client):
+    resp = client.post(
+        "/filter",
+        json={
+            "dataset_id": 999999,
+            "filters": [{"column": "city", "operator": "=", "value": "London"}],
+        },
+    )
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"].lower()
 
 
 # ── GET /highlights/{highlight_id} ────────────────────────────────
@@ -490,7 +614,7 @@ def test_two_pass_search_filtered_results_first(client):
     with patch("app.retrieval.search_vectors", side_effect=mock_search), \
          patch("app.retrieval.embed_texts", return_value=[[0.1] * 384]):
         resp = client.post(
-            "/query",
+            "/semantic_query",
             json={"question": "Who lives in London?", "dataset_id": dataset_id},
         )
 

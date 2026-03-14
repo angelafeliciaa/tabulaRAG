@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Route, Routes } from "react-router-dom";
-import { getServerStatus, type ServerStatus } from "./api";
+import { logout, getUser, getServerStatus, type ServerStatus } from "./api";
 import moonIcon from "./images/moon.png";
 import sunIcon from "./images/sun.png";
 import HighlightView from "./pages/HighlightView";
 import TableView from "./pages/TableView";
 import Upload from "./pages/Upload";
 import AggregateTableView from "./pages/AggregateTable";
+import AuthCallback from "./pages/AuthCallback";
 
 export default function App() {
   const [theme, setTheme] = useState<"dark" | "light">(() => {
@@ -17,7 +18,6 @@ export default function App() {
     return "light";
   });
   const [serverStatus, setServerStatus] = useState<ServerStatus>("Unknown");
-
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     window.localStorage.setItem("theme", theme);
@@ -42,40 +42,71 @@ export default function App() {
     };
   }, []);
 
+  const user = getUser();
+
+  function handleLogout() {
+    logout();
+  }
+
   return (
     <div className="app-shell">
-      <div className={`server-status ${serverStatus}`}>
+      <a className="skip-link" href="#main-content">
+        Skip to main content
+      </a>
+
+      <div
+        className={`server-status ${serverStatus}`}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
         <span className="status-dot" />
         <span>Server Connection: {serverStatus}</span>
       </div>
 
-      <div className="theme-toggle-wrap">
+      <div className="top-bar">
+        <div className="user-menu">
+          {user?.avatar_url && (
+            <img src={user.avatar_url} alt="" className="user-avatar" />
+          )}
+          <span className="user-name">{user?.name || user?.login}</span>
+          <button
+            className="logout-btn"
+            onClick={handleLogout}
+            hidden
+            type="button"
+          >
+            Sign out
+          </button>
+        </div>
+
         <button
           className="theme-toggle"
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          aria-label="Toggle theme"
-          aria-pressed={theme === "light"}
+          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+          aria-pressed={theme === "dark"}
           type="button"
         >
+          <span className="sr-only">
+            {theme === "dark" ? "Dark theme enabled" : "Light theme enabled"}
+          </span>
           <span className="toggle-track">
             <span className="toggle-thumb">
               <img src={theme === "dark" ? moonIcon : sunIcon} alt="" />
             </span>
           </span>
         </button>
-        <div className="toggle-label">
-          {theme === "dark" ? "Dark mode" : "Light mode"}
-        </div>
       </div>
 
-      <div className="content">
+      <main id="main-content" className="content" tabIndex={-1}>
         <Routes>
           <Route path="/" element={<Upload />} />
           <Route path="/tables/virtual" element={<AggregateTableView />} />
           <Route path="/tables/:datasetId" element={<TableView />} />
           <Route path="/highlight/:highlightId" element={<HighlightView />} />
+          <Route path="/auth/callback" element={<AuthCallback onLogin={() => {}} />} />
         </Routes>
-      </div>
+      </main>
     </div>
   );
 }

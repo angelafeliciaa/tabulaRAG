@@ -1,4 +1,7 @@
 .env
+.claude/
+.omc/
+CLAUDE.md
 
 # macOS
 .DS_Store
@@ -60,3 +63,5 @@ logs/
 .DS_Store
 Thumbs.db
 
+.claude/
+CLAUDE.md

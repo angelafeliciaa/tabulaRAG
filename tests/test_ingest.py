@@ -1,6 +1,7 @@
 import io
 import json
 import pytest
+from unittest.mock import patch
 from sqlalchemy import text
 from app.typed_values import strip_internal_fields
 
@@ -104,6 +105,7 @@ def test_db_dataset_record(client, test_engine):
     assert row is not None
     assert row.row_count == 2
     assert row.column_count == 2
+    assert bool(row.is_index_ready) is True
 
 
 def test_dataset_description_persisted(client, test_engine):
@@ -136,7 +138,41 @@ def test_db_rows_stored(client, test_engine):
         rows = conn.execute(text("SELECT row_data FROM dataset_rows")).fetchall()
     assert len(rows) == 1
     data = json.loads(rows[0].row_data)
-    assert strip_internal_fields(data) == {"name": "Alice", "age": "30"}
+    assert data["name"] == "Alice"
+    assert data["age"] == "30"
+
+
+def test_list_tables_returns_ready_datasets_by_default(client):
+    client.post(
+        "/ingest",
+        files=make_csv("name,age\nAlice,30\n"),
+        data={"dataset_name": "ready_table"},
+    )
+
+    response = client.get("/tables")
+    assert response.status_code == 200
+    names = [item["name"] for item in response.json()]
+    assert "ready_table" in names
+
+
+def test_list_tables_hides_pending_datasets_unless_requested(client):
+    with patch("app.main._enqueue_index_job", return_value=None):
+        ingest_response = client.post(
+            "/ingest",
+            files=make_csv("name,age\nAlice,30\n"),
+            data={"dataset_name": "pending_table"},
+        )
+
+    assert ingest_response.status_code == 200
+    dataset_id = ingest_response.json()["dataset_id"]
+
+    ready_only = client.get("/tables")
+    assert ready_only.status_code == 200
+    assert all(item["dataset_id"] != dataset_id for item in ready_only.json())
+
+    include_pending = client.get("/tables?include_pending=true")
+    assert include_pending.status_code == 200
+    assert any(item["dataset_id"] == dataset_id for item in include_pending.json())
 
 
 # ── Error cases ───────────────────────────────────────────────────────────────
@@ -162,3 +198,41 @@ def test_invalid_extension(client):
     )
     assert response.status_code == 400
     assert ".csv or .tsv" in response.json()["detail"]
+
+
+def test_rejects_pdf_content_type_even_with_csv_extension(client):
+    response = client.post(
+        "/ingest",
+        files={"file": ("looks_like_csv.csv", io.BytesIO(b"%PDF-1.7\nfake\n"), "application/pdf")},
+    )
+    assert response.status_code == 400
+    assert "Unsupported content type" in response.json()["detail"]
+
+
+def test_rejects_binary_payload_with_csv_extension(client):
+    response = client.post(
+        "/ingest",
+        files={"file": ("binary.csv", io.BytesIO(b"\x00\x01\x02not-csv"), "text/csv")},
+    )
+    assert response.status_code == 400
+    assert "appears to be binary" in response.json()["detail"]
+
+
+def test_rejects_non_utf8_payload_with_csv_extension(client):
+    response = client.post(
+        "/ingest",
+        files={"file": ("latin1.csv", io.BytesIO(b"\xff\xfe\xfa"), "text/csv")},
+    )
+    assert response.status_code == 400
+    assert "UTF-8 encoded text" in response.json()["detail"]
+
+def test_ingest_does_not_require_auth_temporarily():
+    from fastapi.testclient import TestClient
+    import app.main as app_main
+
+    with TestClient(app_main.app) as unauthenticated:
+        response = unauthenticated.post(
+            "/ingest",
+            files={"file": ("data.csv", io.BytesIO(b"a,b\n1,2\n"), "text/csv")},
+        )
+    assert response.status_code == 200

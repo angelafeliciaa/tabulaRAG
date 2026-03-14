@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { focusByIndex, focusByOffset } from "../accessibility";
 import {
   getSlice,
   listTables,
@@ -10,7 +11,13 @@ import DataTable from "../components/DataTable";
 import returnIcon from "../images/return.png";
 
 type DateViewMode = "default" | "mm-dd-yyyy" | "mon-dd-yyyy";
+type DateMenuState = { x: number; y: number; source: "button" | "cell" } | null;
 const ROWS_PER_PAGE = 500;
+const DATE_VIEW_OPTIONS: Array<{ value: DateViewMode; label: string }> = [
+  { value: "default", label: "Default" },
+  { value: "mm-dd-yyyy", label: "MM-DD-YYYY" },
+  { value: "mon-dd-yyyy", label: "Jan 12, 2002" },
+];
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -29,7 +36,7 @@ function parseDateToDate(value: unknown): Date | null {
   }
 
   const isoMatch = text.match(
-    /^(\d{4})[\/.-](\d{1,2})[\/.-](\d{1,2})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/,
+    /^(\d{4})[/.-](\d{1,2})[/.-](\d{1,2})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/,
   );
   if (isoMatch) {
     const yyyy = isoMatch[1];
@@ -40,7 +47,7 @@ function parseDateToDate(value: unknown): Date | null {
   }
 
   const dmyOrMdy = text.match(
-    /^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/,
+    /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/,
   );
   if (dmyOrMdy) {
     const a = Number(dmyOrMdy[1]);
@@ -107,12 +114,16 @@ export default function TableView() {
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [dateViewMode, setDateViewMode] = useState<DateViewMode>("default");
-  const [dateMenu, setDateMenu] = useState<{ x: number; y: number } | null>(null);
+  const [dateMenu, setDateMenu] = useState<DateMenuState>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageInput, setPageInput] = useState("1");
   const [showScrollHint, setShowScrollHint] = useState(false);
   const [tableAtBottom, setTableAtBottom] = useState(false);
+  const dateMenuId = useId();
   const tableAreaRef = useRef<HTMLDivElement | null>(null);
+  const dateMenuRef = useRef<HTMLDivElement | null>(null);
+  const dateFormatButtonRef = useRef<HTMLButtonElement | null>(null);
+  const dateMenuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   useEffect(() => {
     if (!Number.isFinite(numericDatasetId) || numericDatasetId <= 0) {
@@ -126,7 +137,7 @@ export default function TableView() {
     setDateMenu(null);
 
     let mounted = true;
-    listTables()
+    listTables({ includePending: true })
       .then((tables: TableSummary[]) => {
         if (!mounted) {
           return;
@@ -204,6 +215,9 @@ export default function TableView() {
     () => (data ? detectDateColumns(data.rows, data.columns) : new Set<string>()),
     [data],
   );
+  const dateViewLabel =
+    DATE_VIEW_OPTIONS.find((option) => option.value === dateViewMode)?.label
+    || "Default";
   const filtered = useMemo(() => {
     if (!data) {
       return { rows: [], rowIndices: [] as number[] };
@@ -270,6 +284,9 @@ export default function TableView() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setDateMenu(null);
+        if (dateMenu.source === "button") {
+          dateFormatButtonRef.current?.focus();
+        }
       }
     };
     window.addEventListener("click", close);
@@ -281,6 +298,23 @@ export default function TableView() {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [dateMenu]);
+
+  useEffect(() => {
+    if (!dateMenu) {
+      return;
+    }
+
+    const activeIndex = DATE_VIEW_OPTIONS.findIndex(
+      (option) => option.value === dateViewMode,
+    );
+    const rafId = window.requestAnimationFrame(() => {
+      focusByIndex(dateMenuItemRefs.current, activeIndex === -1 ? 0 : activeIndex);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [dateMenu, dateViewMode]);
 
   useEffect(() => {
     const container = tableAreaRef.current;
@@ -352,6 +386,81 @@ export default function TableView() {
     setPageInput(String(nextPage));
   }
 
+  function openDateMenuFromButton() {
+    const rect = dateFormatButtonRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+
+    const estimatedMenuWidth = 188;
+    setDateMenu({
+      x: Math.max(8, Math.min(rect.right - estimatedMenuWidth, window.innerWidth - estimatedMenuWidth - 8)),
+      y: Math.min(rect.bottom + 6, window.innerHeight - 120),
+      source: "button",
+    });
+  }
+
+  function selectDateViewMode(nextMode: DateViewMode) {
+    setDateViewMode(nextMode);
+    if (dateMenu?.source === "button") {
+      dateFormatButtonRef.current?.focus();
+    }
+    setDateMenu(null);
+  }
+
+  function onDateFormatButtonKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
+    if (
+      event.key === "ArrowDown"
+      || event.key === "ArrowUp"
+      || event.key === "Enter"
+      || event.key === " "
+    ) {
+      event.preventDefault();
+      openDateMenuFromButton();
+    }
+  }
+
+  function onDateMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    const currentTarget = event.target as HTMLElement | null;
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusByOffset(dateMenuItemRefs.current, currentTarget, 1);
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      focusByOffset(dateMenuItemRefs.current, currentTarget, -1);
+      return;
+    }
+
+    if (event.key === "Home") {
+      event.preventDefault();
+      focusByIndex(dateMenuItemRefs.current, 0);
+      return;
+    }
+
+    if (event.key === "End") {
+      event.preventDefault();
+      focusByIndex(dateMenuItemRefs.current, DATE_VIEW_OPTIONS.length - 1);
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setDateMenu(null);
+      if (dateMenu?.source === "button") {
+        dateFormatButtonRef.current?.focus();
+      }
+      return;
+    }
+
+    if (event.key === "Tab") {
+      setDateMenu(null);
+    }
+  }
+
   if (!datasetId) {
     return null;
   }
@@ -359,7 +468,9 @@ export default function TableView() {
   if (!Number.isFinite(numericDatasetId) || numericDatasetId <= 0) {
     return (
       <div className="page-stack">
-        <p className="error">Invalid table id.</p>
+        <p className="error" role="alert">
+          Invalid table id.
+        </p>
       </div>
     );
   }
@@ -370,7 +481,7 @@ export default function TableView() {
         <div className="row" style={{ justifyContent: "space-between" }}>
           <div>
             <div className="table-view-title">{tableName || "Table"}</div>
-            <div className="small">
+            <div className="small" role="status" aria-live="polite" aria-atomic="true">
               {loading
                 ? "Loading table page..."
                 : data && data.rows.length > 0
@@ -387,6 +498,21 @@ export default function TableView() {
               placeholder="Search for values"
               aria-label="Search rows"
             />
+            {dateColumns.size > 0 && (
+              <button
+                ref={dateFormatButtonRef}
+                type="button"
+                className="table-view-format-button"
+                onClick={openDateMenuFromButton}
+                onKeyDown={onDateFormatButtonKeyDown}
+                aria-haspopup="menu"
+                aria-expanded={dateMenu !== null}
+                aria-controls={dateMenu ? dateMenuId : undefined}
+                aria-label={`Date format. Current setting: ${dateViewLabel}`}
+              >
+                Date: {dateViewLabel}
+              </button>
+            )}
             <Link className="table-view-back-link" to="/">
               <img src={returnIcon} alt="" aria-hidden="true" />
               Back to All Uploads
@@ -395,7 +521,11 @@ export default function TableView() {
         </div>
       </div>
 
-      {err && <p className="error">{err}</p>}
+      {err && (
+        <p className="error" role="alert">
+          {err}
+        </p>
+      )}
       {data && (
         <div className="table-area full-table-area" ref={tableAreaRef}>
           <DataTable
@@ -403,12 +533,13 @@ export default function TableView() {
             rows={displayRows}
             rowIndices={filtered.rowIndices}
             sortable
+            caption={`${tableName || "Table"} page ${safeCurrentPage}. ${displayRows.length} row${displayRows.length === 1 ? "" : "s"} shown.`}
             onCellContextMenu={(event, payload) => {
               if (!dateColumns.has(payload.column) || !parseDateToDate(payload.value)) {
                 return;
               }
               event.preventDefault();
-              setDateMenu({ x: event.clientX, y: event.clientY });
+              setDateMenu({ x: event.clientX, y: event.clientY, source: "cell" });
             }}
           />
           {showScrollHint && (
@@ -499,20 +630,29 @@ export default function TableView() {
       )}
       {dateMenu && (
         <div
+          ref={dateMenuRef}
+          id={dateMenuId}
           className="date-context-menu"
           style={{ left: dateMenu.x, top: dateMenu.y }}
           role="menu"
           aria-label="Date format options"
+          onKeyDown={onDateMenuKeyDown}
         >
-          <button type="button" onClick={() => setDateViewMode("default")}>
-            Default
-          </button>
-          <button type="button" onClick={() => setDateViewMode("mm-dd-yyyy")}>
-            MM-DD-YYYY
-          </button>
-          <button type="button" onClick={() => setDateViewMode("mon-dd-yyyy")}>
-            Jan 12, 2002
-          </button>
+          {DATE_VIEW_OPTIONS.map((option, index) => (
+            <button
+              key={option.value}
+              ref={(element) => {
+                dateMenuItemRefs.current[index] = element;
+              }}
+              type="button"
+              role="menuitemradio"
+              aria-checked={dateViewMode === option.value}
+              className={dateViewMode === option.value ? "active" : undefined}
+              onClick={() => selectDateViewMode(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
         </div>
       )}
     </div>

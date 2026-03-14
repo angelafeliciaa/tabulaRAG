@@ -1,4 +1,15 @@
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, UniqueConstraint, Index
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    UniqueConstraint,
+    false,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -16,6 +27,12 @@ class Dataset(Base):
     has_header = Column(Boolean, nullable=False, default=True)
     row_count = Column(Integer, nullable=False, default=0)
     column_count = Column(Integer, nullable=False, default=0)
+    is_index_ready = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=false(),
+    )
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     columns = relationship("DatasetColumn", back_populates="dataset", cascade="all, delete-orphan")

@@ -1,5 +1,83 @@
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
+const TOKEN_KEY = "tabularag_token";
+const USER_KEY = "tabularag_user";
+
+export interface AuthUser {
+  login: string;
+  name: string;
+  avatar_url: string;
+}
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function getUser(): AuthUser | null {
+  const raw = localStorage.getItem(USER_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as AuthUser;
+  } catch {
+    return null;
+  }
+}
+
+export function isAuthenticated(): boolean {
+  return getToken() !== null;
+}
+
+export function authHeaders(): Record<string, string> {
+  const token = getToken();
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+}
+
+export function logout(): void {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
+async function authFetch(
+  input: string | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const res = await fetch(
+    typeof input === "string" ? input : input.toString(),
+    init,
+  );
+  if (res.status === 401) {
+    logout();
+    window.location.replace("/");
+  }
+  return res;
+}
+
+export async function getGithubClientId(): Promise<string> {
+  const res = await fetch(`${API_BASE}/auth/github`);
+  if (!res.ok) throw new Error("GitHub OAuth not configured");
+  const data = (await res.json()) as { client_id: string };
+  return data.client_id;
+}
+
+export async function exchangeGithubCode(
+  code: string,
+): Promise<{ token: string; user: AuthUser }> {
+  const res = await fetch(`${API_BASE}/auth/github/callback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err || "GitHub authentication failed");
+  }
+  const data = (await res.json()) as { token: string; user: AuthUser };
+  localStorage.setItem(TOKEN_KEY, data.token);
+  localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+  return data;
+}
+
 export type ServerStatus = "Online" | "Offline" | "Unknown";
 export type IndexJobState = "queued" | "indexing" | "ready" | "error";
 
@@ -141,6 +219,11 @@ export async function uploadTable(
 
     xhr.open("POST", `${API_BASE}/ingest`);
 
+    const token = getToken();
+    if (token) {
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    }
+
     xhr.upload.onloadstart = () => {
       report(2, "uploading");
     };
@@ -188,6 +271,12 @@ export async function uploadTable(
         return;
       }
 
+      if (xhr.status === 401) {
+        logout();
+        window.location.replace("/");
+        return;
+      }
+
       const detail = xhr.responseText?.trim();
       reject(new Error(detail || `Upload failed with status ${xhr.status}.`));
     };
@@ -206,8 +295,15 @@ export async function uploadTable(
   });
 }
 
-export async function listTables(): Promise<TableSummary[]> {
-  const res = await fetch(`${API_BASE}/tables`);
+export async function listTables(options?: {
+  includePending?: boolean;
+}): Promise<TableSummary[]> {
+  const url = new URL(`${API_BASE}/tables`);
+  if (options?.includePending) {
+    url.searchParams.set("include_pending", "true");
+  }
+
+  const res = await authFetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -222,7 +318,7 @@ export async function listIndexStatus(
     url.searchParams.append("dataset_id", String(datasetId));
   });
 
-  const res = await fetch(url.toString());
+  const res = await authFetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -240,7 +336,7 @@ export async function getSlice(
   url.searchParams.set("offset", String(offset));
   url.searchParams.set("limit", String(limit));
 
-  const res = await fetch(url.toString());
+  const res = await authFetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -263,7 +359,9 @@ export async function getSlice(
 export async function getHighlight(
   highlightId: string,
 ): Promise<HighlightResponse> {
-  const res = await fetch(`${API_BASE}/highlights/${highlightId}`);
+  const res = await authFetch(`${API_BASE}/highlights/${highlightId}`, {
+    headers: authHeaders(),
+  });
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -274,9 +372,10 @@ export async function deleteTable(
   datasetId: number,
   options?: { keepalive?: boolean },
 ): Promise<{ deleted: number }> {
-  const res = await fetch(`${API_BASE}/tables/${datasetId}`, {
+  const res = await authFetch(`${API_BASE}/tables/${datasetId}`, {
     method: "DELETE",
     keepalive: options?.keepalive,
+    headers: authHeaders(),
   });
   if (!res.ok) {
     throw new Error(await res.text());
@@ -288,9 +387,9 @@ export async function renameTable(
   datasetId: number,
   name: string,
 ): Promise<{ name: string }> {
-  const res = await fetch(`${API_BASE}/tables/${datasetId}`, {
+  const res = await authFetch(`${API_BASE}/tables/${datasetId}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ name }),
   });
   if (!res.ok) {
@@ -326,9 +425,27 @@ export type AggregateResponse = {
 };
 
 export async function aggregate(params: unknown): Promise<AggregateResponse> {
-  const res = await fetch(`${API_BASE}/aggregate`, {
+  const res = await authFetch(`${API_BASE}/aggregate`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export type FilterResponse = {
+  dataset_id: number;
+  rowsResult: { row_index: number; row_data: Record<string, unknown> }[];
+  row_count: number;
+  sql_query: string;
+  url: string | null;
+};
+
+export async function filterRows(params: unknown): Promise<FilterResponse> {
+  const res = await authFetch(`${API_BASE}/filter`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(params),
   });
   if (!res.ok) throw new Error(await res.text());

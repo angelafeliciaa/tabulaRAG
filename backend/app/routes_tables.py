@@ -44,13 +44,14 @@ def _delete_collection_safe(dataset_id: int) -> None:
 @router.get(
     "/tables",
     summary="List all datasets",
-    description="Returns all available datasets with their IDs, names, and metadata. Always call this first to discover valid dataset IDs.",
+    description="Returns indexed datasets with their IDs, names, and metadata. Pending uploads are omitted unless include_pending=true.",
 )
-def list_tables():
+def list_tables(include_pending: bool = False):
     with SessionLocal() as db:
-        datasets = (
-            db.execute(select(Dataset).order_by(Dataset.id.desc())).scalars().all()
-        )
+        query = select(Dataset).order_by(Dataset.id.desc())
+        if not include_pending:
+            query = query.where(Dataset.is_index_ready.is_(True))
+        datasets = db.execute(query).scalars().all()
         return [
             {
                 "dataset_id": d.id,

@@ -309,7 +309,7 @@ def _list_dataset_summaries() -> List[Dict[str, Any]]:
         rows = db.execute(
             text(
                 "SELECT id, name, description, source_filename, row_count, column_count, created_at "
-                "FROM datasets ORDER BY id DESC"
+                "FROM datasets WHERE is_index_ready = TRUE ORDER BY id DESC"
             )
         ).fetchall()
 

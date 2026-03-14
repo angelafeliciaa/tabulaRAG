@@ -5,11 +5,15 @@ import logging
 import os
 from typing import Iterable, List, Tuple
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import insert, text, select
 from contextlib import asynccontextmanager
 from app.db import SessionLocal, engine
+from app.dataset_state import (
+    ensure_dataset_index_ready_column,
+    set_dataset_index_ready,
+)
 from app.index_jobs import (
     mark_index_job_error,
     mark_index_job_ready,
@@ -26,6 +30,7 @@ from app.routes_tables import router as tables_router
 from app.routes_query import router as query_router
 from app.typed_values import normalize_row_obj
 from app.name_guard import normalize_dataset_name_or_raise
+from app.auth import require_auth, exchange_github_code, create_jwt, GITHUB_CLIENT_ID
 
 
 logger = logging.getLogger(__name__)
@@ -37,6 +42,7 @@ INDEX_WORKER_CONCURRENCY = max(1, int(os.getenv("INDEX_WORKER_CONCURRENCY", "4")
 async def lifespan(app: FastAPI):
     global _index_worker
     Base.metadata.create_all(bind=engine)
+    ensure_dataset_index_ready_column()
     try:
         from app.embeddings import get_model
         get_model()
@@ -140,6 +146,18 @@ def _normalize_headers(headers: List[str]) -> List[str]:
 
 
 ROW_INSERT_BATCH_SIZE = int(os.getenv("ROW_INSERT_BATCH_SIZE", "20000"))
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
+FILE_SNIFF_BYTES = int(os.getenv("FILE_SNIFF_BYTES", "65536"))
+BLOCKED_UPLOAD_CONTENT_TYPE_PREFIXES = (
+    "application/pdf",
+    "application/zip",
+    "application/x-zip",
+    "application/x-rar",
+    "application/octet-stream",
+    "image/",
+    "audio/",
+    "video/",
+)
 
 
 def _detect_delimiter(filename: str | None) -> str:
@@ -150,11 +168,52 @@ def _detect_delimiter(filename: str | None) -> str:
     return ","
 
 
+def _validate_upload_content(upload: UploadFile) -> None:
+    content_type = (upload.content_type or "").strip().lower()
+    if any(content_type.startswith(prefix) for prefix in BLOCKED_UPLOAD_CONTENT_TYPE_PREFIXES):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported content type '{content_type}' for CSV/TSV upload.",
+        )
+
+    # Enforce a hard file-size cap to reduce parser/DB abuse.
+    upload.file.seek(0, io.SEEK_END)
+    size = upload.file.tell()
+    upload.file.seek(0)
+    if size > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File is too large. Maximum size is {MAX_UPLOAD_BYTES} bytes.",
+        )
+
+    head = upload.file.read(FILE_SNIFF_BYTES)
+    upload.file.seek(0)
+
+    # Empty-file handling remains in _iter_rows for existing behavior/messages.
+    if not head:
+        return
+
+    if b"\x00" in head:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded file appears to be binary. Please upload a valid CSV/TSV file.",
+        )
+
+    try:
+        head.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded file must be UTF-8 encoded text.",
+        ) from exc
+
+
 def _iter_rows(
     upload: UploadFile,
     has_header: bool,
 ) -> Tuple[List[str], Iterable[List[str]], str]:
     validate_filename(upload.filename or "")
+    _validate_upload_content(upload)
     detected_delimiter = _detect_delimiter(upload.filename)
     if detected_delimiter not in [",", "\t"]:
         raise HTTPException(status_code=400, detail="Delimiter must be comma or tab.")
@@ -262,9 +321,11 @@ def _index_dataset_safe(dataset_id: int, total_rows: int) -> None:
             ),
             expected_total_rows=total_rows,
         )
+        set_dataset_index_ready(dataset_id, True)
         mark_index_job_ready(dataset_id, total_rows)
     except Exception as exc:
         logger.exception("Indexing failed for dataset_id=%s", dataset_id)
+        set_dataset_index_ready(dataset_id, False)
         mark_index_job_error(dataset_id, total_rows, f"Indexing failed: {exc}")
 
 
@@ -281,15 +342,18 @@ def _resume_incomplete_index_jobs() -> None:
 
     with SessionLocal() as db:
         datasets = db.execute(
-            select(Dataset.id, Dataset.row_count)
-            .where(Dataset.row_count > 0)
-            .order_by(Dataset.id.asc())
+            select(Dataset.id, Dataset.row_count, Dataset.is_index_ready).order_by(
+                Dataset.id.asc()
+            )
         ).all()
 
-    for dataset_id_raw, row_count_raw in datasets:
+    for dataset_id_raw, row_count_raw, is_index_ready_raw in datasets:
         dataset_id = int(dataset_id_raw)
         row_count = int(row_count_raw or 0)
+        is_index_ready = bool(is_index_ready_raw)
         if row_count <= 0:
+            if not is_index_ready:
+                set_dataset_index_ready(dataset_id, True)
             continue
 
         try:
@@ -298,10 +362,45 @@ def _resume_incomplete_index_jobs() -> None:
             point_count = None
 
         if point_count is not None and int(point_count) >= row_count:
+            if not is_index_ready:
+                set_dataset_index_ready(dataset_id, True)
+            continue
+        if point_count is None and is_index_ready:
             continue
 
+        if is_index_ready:
+            set_dataset_index_ready(dataset_id, False)
         queue_index_job(dataset_id, row_count)
         _index_worker.enqueue(dataset_id, row_count)
+
+
+@app.post("/auth/verify", include_in_schema=False)
+def auth_verify(credentials: None = Depends(require_auth)) -> dict:
+    return {"valid": True}
+
+
+@app.get("/auth/github", include_in_schema=False)
+def auth_github_redirect():
+    if not GITHUB_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="GitHub OAuth not configured")
+    return {"client_id": GITHUB_CLIENT_ID}
+
+
+@app.post("/auth/github/callback", include_in_schema=False)
+async def auth_github_callback(body: dict):
+    code = body.get("code")
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing code parameter")
+    github_user = await exchange_github_code(code)
+    token = create_jwt(github_user)
+    return {
+        "token": token,
+        "user": {
+            "login": github_user["login"],
+            "name": github_user.get("name") or github_user["login"],
+            "avatar_url": github_user.get("avatar_url", ""),
+        },
+    }
 
 
 @app.post("/ingest", include_in_schema=False)
@@ -330,6 +429,7 @@ def ingest_table(
             delimiter=detected_delimiter,
             has_header=has_header,
             column_count=len(headers),
+            is_index_ready=False,
         )
         db.add(
             dataset
@@ -369,9 +469,13 @@ def ingest_table(
         )
         db.commit()
 
-    # Start vector indexing after response so uploads don't block on embedding/Qdrant upserts.
-    queue_index_job(dataset_id, row_count)
-    _enqueue_index_job(dataset_id, row_count)
+    if row_count <= 0:
+        set_dataset_index_ready(dataset_id, True)
+        mark_index_job_ready(dataset_id, row_count)
+    else:
+        # Start vector indexing after response so uploads don't block on embedding/Qdrant upserts.
+        queue_index_job(dataset_id, row_count)
+        _enqueue_index_job(dataset_id, row_count)
 
     return {
         "dataset_id": dataset_id,
