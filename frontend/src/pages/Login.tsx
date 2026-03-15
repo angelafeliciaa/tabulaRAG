@@ -26,7 +26,11 @@ export default function Login() {
         <img src={logo} alt="TabulaRAG" className="login-logo" />
         <h1 className="login-title">TabulaRAG</h1>
         <p className="login-subtitle">Sign in to continue</p>
-        {error && <p className="login-error">{error}</p>}
+        {error && (
+          <p className="login-error" role="alert">
+            {error}
+          </p>
+        )}
         <button
           type="button"
           className="login-btn github-btn"

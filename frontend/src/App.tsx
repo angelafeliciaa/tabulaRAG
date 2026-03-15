@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Route, Routes } from "react-router-dom";
+import { Link, Route, Routes } from "react-router-dom";
 import { logout, getUser, getServerStatus, type ServerStatus } from "./api";
+import logo from "./images/logo.png";
 import moonIcon from "./images/moon.png";
 import sunIcon from "./images/sun.png";
 import HighlightView from "./pages/HighlightView";
@@ -50,7 +51,20 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <div className={`server-status ${serverStatus}`}>
+      <Link className="app-brand" to="/" aria-label="Go to home">
+        <img src={logo} alt="" aria-hidden="true" />
+      </Link>
+
+      <a className="skip-link" href="#main-content">
+        Skip to main content
+      </a>
+
+      <div
+        className={`server-status ${serverStatus}`}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
         <span className="status-dot" />
         <span>Server Connection: {serverStatus}</span>
       </div>
@@ -74,10 +88,13 @@ export default function App() {
         <button
           className="theme-toggle"
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          aria-label="Toggle theme"
-          aria-pressed={theme === "light"}
+          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+          aria-pressed={theme === "dark"}
           type="button"
         >
+          <span className="sr-only">
+            {theme === "dark" ? "Dark theme enabled" : "Light theme enabled"}
+          </span>
           <span className="toggle-track">
             <span className="toggle-thumb">
               <img src={theme === "dark" ? moonIcon : sunIcon} alt="" />
@@ -86,7 +103,7 @@ export default function App() {
         </button>
       </div>
 
-      <div className="content">
+      <main id="main-content" className="content" tabIndex={-1}>
         <Routes>
           <Route path="/" element={<Upload />} />
           <Route path="/tables/virtual" element={<AggregateTableView />} />
@@ -94,7 +111,7 @@ export default function App() {
           <Route path="/highlight/:highlightId" element={<HighlightView />} />
           <Route path="/auth/callback" element={<AuthCallback onLogin={() => {}} />} />
         </Routes>
-      </div>
+      </main>
     </div>
   );
 }

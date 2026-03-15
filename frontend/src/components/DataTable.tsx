@@ -1,4 +1,4 @@
-import { type MouseEvent, useMemo, useState } from "react";
+import { type MouseEvent, type ReactNode, useMemo, useState } from "react";
 
 type DataTableProps = {
   columns: string[];
@@ -7,6 +7,7 @@ type DataTableProps = {
   rows: Record<string, unknown>[];
   /** When set, sorting uses these values (e.g. normalized) instead of rows. Must match rows in length and order. */
   sortRows?: Record<string, unknown>[];
+  caption?: string;
   highlight?: { rows: number[]; cols: string[] };
   rowOffset?: number;
   rowIndices?: number[];
@@ -24,6 +25,9 @@ type DataTableProps = {
     event: MouseEvent<HTMLTableCellElement>,
     payload: { column: string; value: unknown; rowIndex: number },
   ) => void;
+  onRowClick?: (payload: { row: Record<string, unknown>; rowIndex: number; isHighlighted: boolean }) => void;
+  rowAction?: (payload: { row: Record<string, unknown>; rowIndex: number }) => ReactNode;
+  rowActionLabel?: string;
 };
 
 type SortDirection = "asc" | "desc";
@@ -199,6 +203,7 @@ export default function DataTable({
   columnLabels,
   rows,
   sortRows,
+  caption,
   highlight,
   rowOffset = 0,
   rowIndices,
@@ -209,6 +214,9 @@ export default function DataTable({
   onSortChange,
   formatCellValue,
   onCellContextMenu,
+  onRowClick,
+  rowAction,
+  rowActionLabel = "",
 }: DataTableProps) {
   const labels = columnLabels ?? columns;
   const [clientSortColumn, setClientSortColumn] = useState<string | null>(null);
@@ -304,6 +312,9 @@ export default function DataTable({
     <div className="card table-card">
       <div className="table-scroll">
         <table>
+          <caption className="sr-only">
+            {caption || `Data table with ${displayRows.length} rows and ${columns.length} columns.`}
+          </caption>
           <thead>
             <tr>
               <th className="mono">#</th>
@@ -320,6 +331,7 @@ export default function DataTable({
                   <th
                     key={column}
                     className="table-header-cell-preserve-ws"
+                    scope="col"
                     aria-sort={
                       sortColumn === column
                         ? sortDirection === "asc"
@@ -342,6 +354,7 @@ export default function DataTable({
                   </th>
                 );
               })}
+              {rowAction && <th className="table-row-action-header">{rowActionLabel}</th>}
             </tr>
           </thead>
           <tbody>
@@ -349,11 +362,24 @@ export default function DataTable({
               const isHighlightedRow = highlightedRows.has(absoluteRowIndex);
 
               return (
-                <tr key={absoluteRowIndex} data-row-index={absoluteRowIndex}>
-                  <td className={`mono ${isHighlightedRow ? "hl" : ""}`}>{absoluteRowIndex}</td>
+                <tr
+                  key={absoluteRowIndex}
+                  data-row-index={absoluteRowIndex}
+                  className={
+                    `${isHighlightedRow ? "table-row-highlighted" : ""} ${onRowClick ? "table-row-selectable" : ""}`.trim()
+                  }
+                  onClick={() => onRowClick?.({ row, rowIndex: absoluteRowIndex, isHighlighted: isHighlightedRow })}
+                >
+                  <th
+                    scope="row"
+                    className={`mono ${isHighlightedRow ? "hl" : ""}`}
+                  >
+                    {absoluteRowIndex}
+                  </th>
                   {columns.map((column) => {
                     const isHighlightedCell =
-                      isHighlightedRow && highlightedCols.has(column);
+                      isHighlightedRow
+                      && (highlightedCols.size === 0 || highlightedCols.has(column));
                     const rawValue = row[column];
                     return (
                       <td
@@ -373,6 +399,11 @@ export default function DataTable({
                       </td>
                     );
                   })}
+                  {rowAction && (
+                    <td className="table-row-action-cell">
+                      {rowAction({ row, rowIndex: absoluteRowIndex })}
+                    </td>
+                  )}
                 </tr>
               );
             })}
