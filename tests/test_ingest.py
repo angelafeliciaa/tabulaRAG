@@ -121,8 +121,24 @@ def test_dataset_description_persisted(client, test_engine):
         row = conn.execute(
             text("SELECT description FROM datasets WHERE name = 'desc_test'")
         ).fetchone()
+    print(row.description)
     assert row is not None
     assert row.description == "Annual revenue summary table"
+
+
+def test_no_description_stored_as_null(client, test_engine):
+    client.post(
+        "/ingest",
+        files=make_csv("name,age\nAlice,30\nBob,25\n"),
+        data={"dataset_name": "no_desc_test"},
+    )
+    with test_engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT * FROM datasets WHERE name = 'no_desc_test'")
+        ).fetchone()
+    print(row)
+    assert row is not None
+    assert row.description is None
 
 
 def test_db_columns_stored(client, test_engine):
