@@ -60,6 +60,7 @@ export default function App() {
     <div className="app-shell">
       <Link className="app-brand" to="/" aria-label="Go to home">
         <img src={logo} alt="" aria-hidden="true" />
+        <span className="app-brand-text">TabulaRAG</span>
       </Link>
 
       <a className="skip-link" href="#main-content">

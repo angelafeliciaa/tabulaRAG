@@ -880,7 +880,19 @@ export default function TableView() {
   }
 
   return (
-    <div className="page-stack full-table-page">
+    <div
+      className={`page-stack full-table-page${isMultiHighlightMode && multiHighlightRows.length > 0 ? " has-highlight-nav" : ""}`}
+    >
+      {(isMultiHighlightMode || highlightedRow !== null) && hasQueryContext && (
+        <div className="table-view-back-row">
+          <Link className="table-view-context-btn" to={returnPath} aria-label="Back to Query Results" title="Back to Query Results">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M20 11H7.83l4.59-4.59a1 1 0 1 0-1.42-1.41l-6.3 6.29a1 1 0 0 0 0 1.42l6.3 6.29a1 1 0 1 0 1.42-1.41L7.83 13H20a1 1 0 1 0 0-2Z" fill="currentColor" />
+            </svg>
+            Back to Query Results
+          </Link>
+        </div>
+      )}
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="row table-view-header-row" style={{ justifyContent: "space-between" }}>
           <div className="table-view-header-main">
@@ -894,30 +906,6 @@ export default function TableView() {
                     ? ` • Selected ${Math.min(activeHighlightCursor + 1, multiHighlightRows.length)} of ${multiHighlightRows.length}`
                     : ""}
                 </span>
-                {multiHighlightRows.length > 0 && (
-                  <>
-                    <button
-                      type="button"
-                      className="table-view-highlight-nav-btn"
-                      onClick={() => moveMultiHighlightCursor(-1)}
-                      disabled={activeHighlightCursor <= 0}
-                      aria-label="Go to previous highlighted row"
-                      title="Previous highlighted row"
-                    >
-                      {"<"}
-                    </button>
-                    <button
-                      type="button"
-                      className="table-view-highlight-nav-btn"
-                      onClick={() => moveMultiHighlightCursor(1)}
-                      disabled={activeHighlightCursor >= multiHighlightRows.length - 1}
-                      aria-label="Go to next highlighted row"
-                      title="Next highlighted row"
-                    >
-                      {">"}
-                    </button>
-                  </>
-                )}
               </div>
             )}
             {!isMultiHighlightMode && highlightedRow !== null && (
@@ -956,27 +944,19 @@ export default function TableView() {
                 <option value="original">Original</option>
               </select>
             </label>
-            <input
-              type="text"
-              className="table-view-search"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Search for values"
-              aria-label="Search rows"
-            />
-            {(isMultiHighlightMode || highlightedRow !== null) && hasQueryContext && (
-              <Link className="table-view-context-btn" to={returnPath} aria-label="Back to Query Results" title="Back to Query Results">
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M20 11H7.83l4.59-4.59a1 1 0 1 0-1.42-1.41l-6.3 6.29a1 1 0 0 0 0 1.42l6.3 6.29a1 1 0 1 0 1.42-1.41L7.83 13H20a1 1 0 1 0 0-2Z" fill="currentColor" />
-                </svg>
-                Back to Query Results
-              </Link>
-            )}
-            <Link className="table-view-icon-btn" to="/" aria-label="Back to All Uploads" title="Back to All Uploads">
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path d="M12 4.2 4 10v9a1 1 0 0 0 1 1h4.8a1 1 0 0 0 1-1v-4.2h2.4V19a1 1 0 0 0 1 1H19a1 1 0 0 0 1-1v-9l-8-5.8Z" fill="currentColor" />
+            <div className="table-view-search-wrap">
+              <svg className="table-view-search-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="currentColor" />
               </svg>
-            </Link>
+              <input
+                type="text"
+                className="table-view-search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Search for values"
+                aria-label="Search rows"
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -987,66 +967,100 @@ export default function TableView() {
         </p>
       )}
       {data && (
-        <div className="table-area full-table-area" ref={tableAreaRef}>
-          <DataTable
-            columns={data.columns}
-            columnLabels={
-              data.columns_meta
-                ? data.columns_meta.map((m) =>
-                    valueMode === "original"
-                      ? (m.original_name ?? m.normalized_name)
-                      : m.normalized_name,
-                  )
-                : undefined
-            }
-            rows={displayRows}
-            sortRows={sortRows}
-            rowIndices={filtered.rowIndices}
-            onRowClick={({ rowIndex, isHighlighted }) => {
-              if (!isMultiHighlightMode || !isHighlighted) {
-                return;
-              }
-              const nextCursor = multiHighlightRows.indexOf(rowIndex);
-              if (nextCursor !== -1) {
-                pageChangeSourceRef.current = "highlight";
-                setActiveHighlightCursor(nextCursor);
-              }
-            }}
-            highlight={
-              highlightedRows.length > 0
-                ? { rows: highlightedRows, cols: data.columns }
-                : undefined
-            }
-            sortable
-            sortMode="server"
-            serverSortColumn={sortColumn}
-            serverSortDirection={sortDirection}
-            onSortChange={(column, direction) => {
-              setSortColumn(column);
-              setSortDirection(direction);
-              setCurrentPage(1);
-              setPageInput("1");
-            }}
-            caption={`${tableName || "Table"} page ${safeCurrentPage}. ${displayRows.length} row${displayRows.length === 1 ? "" : "s"} shown.`}
-            onCellContextMenu={(event, payload) => {
-              if (!dateColumns.has(payload.column) || !parseDateToDate(payload.value)) {
-                return;
-              }
-              event.preventDefault();
-              setDateMenu({ x: event.clientX, y: event.clientY });
-            }}
-          />
-          {showScrollHint && (
-            <button
-              type="button"
-              className="scroll-indicator full-table-scroll-indicator"
-              onClick={scrollTableToEdge}
-              aria-label={tableAtBottom ? "Scroll table to top" : "Scroll table to bottom"}
-              title={tableAtBottom ? "Scroll to top" : "Scroll to bottom"}
-            >
-              {tableAtBottom ? "▲" : "▼"}
-            </button>
+        <div
+          className={
+            isMultiHighlightMode && multiHighlightRows.length > 0
+              ? "table-area-outer has-highlight-nav"
+              : "table-area-outer"
+          }
+        >
+          {isMultiHighlightMode && multiHighlightRows.length > 0 && (
+            <div className="table-view-highlight-nav-sidebar table-view-highlight-nav-sidebar-absolute" aria-label="Highlight navigation">
+              <button
+                type="button"
+                className="table-view-highlight-nav-btn table-view-highlight-nav-btn-up"
+                onClick={() => moveMultiHighlightCursor(-1)}
+                disabled={activeHighlightCursor <= 0}
+                aria-label="Previous highlighted row"
+                title="Previous highlighted row"
+              >
+                ▲
+              </button>
+              <button
+                type="button"
+                className="table-view-highlight-nav-btn table-view-highlight-nav-btn-down"
+                onClick={() => moveMultiHighlightCursor(1)}
+                disabled={activeHighlightCursor >= multiHighlightRows.length - 1}
+                aria-label="Next highlighted row"
+                title="Next highlighted row"
+              >
+                ▼
+              </button>
+            </div>
           )}
+          <div className="table-area-outer">
+            <div className="table-area full-table-area" ref={tableAreaRef}>
+            <DataTable
+              columns={data.columns}
+              columnLabels={
+                data.columns_meta
+                  ? data.columns_meta.map((m) =>
+                      valueMode === "original"
+                        ? (m.original_name ?? m.normalized_name)
+                        : m.normalized_name,
+                    )
+                  : undefined
+              }
+              rows={displayRows}
+              sortRows={sortRows}
+              rowIndices={filtered.rowIndices}
+              onRowClick={({ rowIndex, isHighlighted }) => {
+                if (!isMultiHighlightMode || !isHighlighted) {
+                  return;
+                }
+                const nextCursor = multiHighlightRows.indexOf(rowIndex);
+                if (nextCursor !== -1) {
+                  pageChangeSourceRef.current = "highlight";
+                  setActiveHighlightCursor(nextCursor);
+                }
+              }}
+              highlight={
+                highlightedRows.length > 0
+                  ? { rows: highlightedRows, cols: data.columns }
+                  : undefined
+              }
+              sortable
+              sortMode="server"
+              serverSortColumn={sortColumn}
+              serverSortDirection={sortDirection}
+              onSortChange={(column, direction) => {
+                setSortColumn(column);
+                setSortDirection(direction);
+                setCurrentPage(1);
+                setPageInput("1");
+              }}
+              caption={`${tableName || "Table"} page ${safeCurrentPage}. ${displayRows.length} row${displayRows.length === 1 ? "" : "s"} shown.`}
+              onCellContextMenu={(event, payload) => {
+                if (!dateColumns.has(payload.column) || !parseDateToDate(payload.value)) {
+                  return;
+                }
+                event.preventDefault();
+                setDateMenu({ x: event.clientX, y: event.clientY });
+              }}
+            />
+            {showScrollHint && (
+              <button
+                type="button"
+                className="scroll-indicator full-table-scroll-indicator"
+                onClick={scrollTableToEdge}
+                aria-label={tableAtBottom ? "Scroll table to top" : "Scroll table to bottom"}
+                title={tableAtBottom ? "Scroll to top" : "Scroll to bottom"}
+              >
+                {tableAtBottom ? "▲" : "▼"}
+              </button>
+            )}
+            </div>
+          </div>
         </div>
       )}
       {data && effectiveRowCount > 0 && (

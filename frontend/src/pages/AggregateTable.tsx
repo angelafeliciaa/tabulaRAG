@@ -347,11 +347,6 @@ export default function VirtualTableView() {
               placeholder="Search for values"
               aria-label="Search results rows"
             />
-            <Link className="table-view-icon-btn" to="/" aria-label="Back to All Uploads" title="Back to All Uploads">
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path d="M12 4.2 4 10v9a1 1 0 0 0 1 1h4.8a1 1 0 0 0 1-1v-4.2h2.4V19a1 1 0 0 0 1 1H19a1 1 0 0 0 1-1v-9l-8-5.8Z" fill="currentColor" />
-              </svg>
-            </Link>
           </div>
         </div>
       </div>

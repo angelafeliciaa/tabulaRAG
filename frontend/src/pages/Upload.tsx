@@ -1539,7 +1539,7 @@ export default function Upload() {
               <button
                 ref={deleteCancelButtonRef}
                 type="button"
-                className="glass"
+                className="surface-btn"
                 onClick={() => {
                   setDeleteConfirmTable(null);
                 }}
@@ -1711,7 +1711,7 @@ export default function Upload() {
                   ref={uploadPickerQueueButtonRef}
                   onClick={() => openUploadPicker("queue")}
                   type="button"
-                  className={`glass upload-add-more-button upload-icon-only ${uploadPickerOpen === "queue" ? "active" : ""}`}
+                  className={`surface-btn upload-add-more-button upload-icon-only ${uploadPickerOpen === "queue" ? "active" : ""}`}
                   aria-label="Upload options"
                   title="Upload options"
                   aria-haspopup="menu"
@@ -1925,7 +1925,7 @@ export default function Upload() {
                 <div className="upload-queue-footer-actions">
                   <button
                     type="button"
-                    className="glass upload-cancel-all-button"
+                    className="surface-btn upload-cancel-all-button"
                     onClick={onCancelAllQueuedFiles}
                     disabled={busy}
                   >
