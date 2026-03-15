@@ -63,7 +63,11 @@ export default function Login() {
         <img src={logo} alt="TabulaRAG" className="login-logo" />
         <h1 className="login-title">TabulaRAG</h1>
         <p className="login-subtitle">Sign in to continue</p>
-        {error && <p className="login-error">{error}</p>}
+        {error && (
+          <p className="login-error" role="alert">
+            {error}
+          </p>
+        )}
         {checking ? (
           <p className="login-subtitle">Loading...</p>
         ) : (
@@ -109,7 +113,9 @@ export default function Login() {
               </button>
             )}
             {!providers.github && !providers.google && (
-              <p className="login-error">No OAuth providers configured. Check server settings.</p>
+              <p className="login-error" role="alert">
+                No OAuth providers configured. Check server settings.
+              </p>
             )}
           </>
         )}

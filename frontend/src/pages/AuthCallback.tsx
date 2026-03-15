@@ -41,7 +41,9 @@ export default function AuthCallback({ onLogin }: AuthCallbackProps) {
     return (
       <div className="login-page">
         <div className="login-card">
-          <p className="login-error">No authorization code received.</p>
+          <p className="login-error" role="alert">
+            No authorization code received.
+          </p>
           <button
             type="button"
             className="login-btn"
@@ -58,7 +60,9 @@ export default function AuthCallback({ onLogin }: AuthCallbackProps) {
     return (
       <div className="login-page">
         <div className="login-card">
-          <p className="login-error">Invalid OAuth state. Please try again.</p>
+          <p className="login-error" role="alert">
+            Invalid OAuth state. Please try again.
+          </p>
           <button
             type="button"
             className="login-btn"
@@ -75,7 +79,9 @@ export default function AuthCallback({ onLogin }: AuthCallbackProps) {
     return (
       <div className="login-page">
         <div className="login-card">
-          <p className="login-error">{error}</p>
+          <p className="login-error" role="alert">
+            {error}
+          </p>
           <button
             type="button"
             className="login-btn"
@@ -91,7 +97,7 @@ export default function AuthCallback({ onLogin }: AuthCallbackProps) {
   return (
     <div className="login-page">
       <div className="login-card">
-        <p className="login-subtitle">
+        <p className="login-subtitle" role="status" aria-live="polite">
           Signing in with {provider === "google" ? "Google" : "GitHub"}...
         </p>
       </div>

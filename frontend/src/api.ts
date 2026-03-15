@@ -498,7 +498,7 @@ export async function aggregate(params: unknown): Promise<AggregateResponse> {
 
 export type FilterResponse = {
   dataset_id: number;
-  rowsResult: { row_index: number; row_data: Record<string, unknown> }[];
+  rowsResult: { row_index: number; row_data: Record<string, unknown>; highlight_id: string }[];
   row_count: number;
   sql_query: string;
   url: string | null;
@@ -506,6 +506,24 @@ export type FilterResponse = {
 
 export async function filterRows(params: unknown): Promise<FilterResponse> {
   const res = await authFetch(`${API_BASE}/filter`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export type FilterRowIndicesResponse = {
+  dataset_id: number;
+  row_indices: number[];
+  total_match_count: number;
+  truncated: boolean;
+  sql_query: string;
+};
+
+export async function filterRowIndices(params: unknown): Promise<FilterRowIndicesResponse> {
+  const res = await authFetch(`${API_BASE}/filter/row-indices`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(params),
