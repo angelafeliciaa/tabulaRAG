@@ -13,6 +13,7 @@ type DataTableProps = {
     event: MouseEvent<HTMLTableCellElement>,
     payload: { column: string; value: unknown; rowIndex: number },
   ) => void;
+  onRowClick?: (payload: { row: Record<string, unknown>; rowIndex: number; isHighlighted: boolean }) => void;
   rowAction?: (payload: { row: Record<string, unknown>; rowIndex: number }) => ReactNode;
   rowActionLabel?: string;
 };
@@ -195,6 +196,7 @@ export default function DataTable({
   sortable = false,
   formatCellValue,
   onCellContextMenu,
+  onRowClick,
   rowAction,
   rowActionLabel = "",
 }: DataTableProps) {
@@ -328,7 +330,10 @@ export default function DataTable({
                 <tr
                   key={absoluteRowIndex}
                   data-row-index={absoluteRowIndex}
-                  className={isHighlightedRow ? "table-row-highlighted" : undefined}
+                  className={
+                    `${isHighlightedRow ? "table-row-highlighted" : ""} ${onRowClick ? "table-row-selectable" : ""}`.trim()
+                  }
+                  onClick={() => onRowClick?.({ row, rowIndex: absoluteRowIndex, isHighlighted: isHighlightedRow })}
                 >
                   <th
                     scope="row"

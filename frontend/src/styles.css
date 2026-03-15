@@ -2073,6 +2073,38 @@ ul {
     margin-left: auto;
 }
 
+.table-view-header-row {
+    flex-wrap: nowrap;
+    align-items: flex-start;
+}
+
+.table-view-header-main {
+    min-width: 0;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.table-view-header-main .table-view-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.table-view-header-status {
+    min-height: 20px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.table-view-header-status span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .table-view-search {
     width: 340px;
     min-width: 240px;
@@ -2245,10 +2277,10 @@ ul {
 }
 
 .table-view-row-meta {
-    margin-top: 6px;
+    margin-top: 0;
     display: inline-flex;
-    align-items: baseline;
-    gap: 4px;
+    align-items: center;
+    gap: 6px;
     color: var(--text-muted);
     font-size: 13px;
     line-height: 1.35;
@@ -2454,6 +2486,10 @@ tr:hover th[scope="row"] {
   background: var(--overlay);
 }
 
+.table-row-selectable {
+  cursor: pointer;
+}
+
 .table-row-highlighted td,
 .table-row-highlighted th[scope="row"] {
   background: rgba(253, 224, 71, 0.35);
@@ -2508,6 +2544,28 @@ tr.table-row-highlighted:hover th[scope="row"] {
   color: var(--text-muted);
   font-size: 13px;
   line-height: 1.35;
+}
+
+.virtual-results-header-row {
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.virtual-results-header-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.virtual-results-header-main .result-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.virtual-results-tools {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .error {
@@ -2707,6 +2765,16 @@ input:focus-visible,
     min-width: 0;
   }
 
+  .virtual-results-header-row {
+    flex-wrap: wrap;
+  }
+
+  .virtual-results-header-main .result-title {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: initial;
+  }
+
   .table-view-tools {
     width: 100%;
     display: flex;
@@ -2714,6 +2782,28 @@ input:focus-visible,
     justify-content: flex-end;
     align-items: center;
     gap: 6px;
+  }
+
+  .table-view-header-row {
+    flex-wrap: wrap;
+  }
+
+  .table-view-header-main .table-view-title {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: initial;
+  }
+
+  .table-view-header-status {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: initial;
+  }
+
+  .table-view-header-status span {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: initial;
   }
 
   .table-view-context-btn {

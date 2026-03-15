@@ -274,7 +274,7 @@ export default function VirtualTableView() {
     <div className="page-stack virtual-results-page">
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="row virtual-results-header-row">
-          <div>
+          <div className="virtual-results-header-main">
             <div className="result-title">{resultTitle}</div>
             {resultSubtitle ? <div className="result-subtitle">{resultSubtitle}</div> : null}
             <div className="small">

@@ -240,6 +240,25 @@ export default function TableView() {
   const isMultiHighlightMode = highlightMode === "multi" && !!encodedHighlightSpec;
   const returnPath = resolveReturnPath(location.search);
   const sourceQueryTitle = useMemo(() => buildQueryContextTitle(returnPath), [returnPath]);
+  const returnQueryMode = useMemo<"filter" | "aggregate" | null>(() => {
+    if (!returnPath || returnPath === "/") {
+      return null;
+    }
+    try {
+      const parsed = new URL(returnPath, window.location.origin);
+      const encoded = parsed.searchParams.get("q");
+      if (!encoded) {
+        return null;
+      }
+      const payload = decodePayload(encoded);
+      if ("mode" in payload && payload.mode === "filter") {
+        return "filter";
+      }
+      return "aggregate";
+    } catch {
+      return null;
+    }
+  }, [returnPath]);
   const parsedMultiSpec = useMemo(() => {
     if (!isMultiHighlightMode || !encodedHighlightSpec) {
       return null;
@@ -273,6 +292,7 @@ export default function TableView() {
   const tableAreaRef = useRef<HTMLDivElement | null>(null);
   const dateMenuRef = useRef<HTMLDivElement | null>(null);
   const dateMenuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const pageChangeSourceRef = useRef<"table" | "highlight">("table");
 
   useEffect(() => {
     if (!Number.isFinite(numericDatasetId) || numericDatasetId <= 0) {
@@ -354,6 +374,12 @@ export default function TableView() {
         setMultiHighlightTruncated(result.truncated);
         setActiveHighlightCursor(0);
         setMultiHighlightLabel(parsedMultiSpec.label || "All matching rows");
+        if (result.row_indices.length > 0) {
+          const initialHighlightPage = Math.floor(result.row_indices[0] / ROWS_PER_PAGE) + 1;
+          pageChangeSourceRef.current = "highlight";
+          setCurrentPage(initialHighlightPage);
+          setPageInput(String(initialHighlightPage));
+        }
       })
       .catch((error: unknown) => {
         if (!mounted) {
@@ -375,27 +401,17 @@ export default function TableView() {
   useEffect(() => {
     const initialPage = highlightedRow !== null ? Math.floor(highlightedRow / ROWS_PER_PAGE) + 1 : 1;
     if (isMultiHighlightMode) {
+      pageChangeSourceRef.current = "table";
       setCurrentPage(1);
       setPageInput("1");
       setSearchQuery("");
       return;
     }
+    pageChangeSourceRef.current = "table";
     setCurrentPage(initialPage);
     setPageInput(String(initialPage));
     setSearchQuery("");
   }, [numericDatasetId, highlightedRow, isMultiHighlightMode]);
-
-  useEffect(() => {
-    if (!isMultiHighlightMode || multiHighlightRows.length === 0) {
-      return;
-    }
-    const targetRow = multiHighlightRows[Math.min(activeHighlightCursor, multiHighlightRows.length - 1)];
-    const highlightPage = Math.floor(targetRow / ROWS_PER_PAGE) + 1;
-    if (currentPage !== highlightPage) {
-      setCurrentPage(highlightPage);
-      setPageInput(String(highlightPage));
-    }
-  }, [activeHighlightCursor, currentPage, isMultiHighlightMode, multiHighlightRows]);
 
   useEffect(() => {
     if (!isMultiHighlightMode || activeHighlightCursor < multiHighlightRows.length) {
@@ -403,6 +419,25 @@ export default function TableView() {
     }
     setActiveHighlightCursor(Math.max(0, multiHighlightRows.length - 1));
   }, [activeHighlightCursor, isMultiHighlightMode, multiHighlightRows.length]);
+
+  useEffect(() => {
+    if (!isMultiHighlightMode || multiHighlightRows.length === 0) {
+      return;
+    }
+    if (pageChangeSourceRef.current === "highlight") {
+      pageChangeSourceRef.current = "table";
+      return;
+    }
+    const normalizedPage = Math.max(1, currentPage);
+    const pageStart = (normalizedPage - 1) * ROWS_PER_PAGE;
+    const pageEndExclusive = pageStart + ROWS_PER_PAGE;
+    const firstIndexOnPage = multiHighlightRows.findIndex(
+      (rowIndex) => rowIndex >= pageStart && rowIndex < pageEndExclusive,
+    );
+    if (firstIndexOnPage !== -1 && firstIndexOnPage !== activeHighlightCursor) {
+      setActiveHighlightCursor(firstIndexOnPage);
+    }
+  }, [activeHighlightCursor, currentPage, isMultiHighlightMode, multiHighlightRows]);
 
   const activeMultiHighlightedRow = useMemo(() => {
     if (!isMultiHighlightMode || multiHighlightRows.length === 0) {
@@ -467,11 +502,21 @@ export default function TableView() {
       : [];
   const pageInputWidthCh = Math.max(2, String(totalPages).length + 1);
   const headerTitle = useMemo(() => {
+    if (isMultiHighlightMode) {
+      const label = (multiHighlightLabel || parsedMultiSpec?.label || "Result").trim();
+      return `Aggregate Result: ${label}`;
+    }
+    if (highlightedRow !== null && returnQueryMode === "filter") {
+      if (sourceQueryTitle) {
+        return sourceQueryTitle;
+      }
+      return "Filter Result";
+    }
     if (sourceQueryTitle) {
       return sourceQueryTitle;
     }
     return tableName || "Table";
-  }, [sourceQueryTitle, tableName]);
+  }, [highlightedRow, isMultiHighlightMode, multiHighlightLabel, parsedMultiSpec?.label, returnQueryMode, sourceQueryTitle, tableName]);
   const dateColumns = useMemo(
     () => (data ? detectDateColumns(data.rows, data.columns) : new Set<string>()),
     [data],
@@ -659,6 +704,7 @@ export default function TableView() {
     }
     const normalized = Math.trunc(parsed);
     const nextPage = Math.min(totalPages, Math.max(1, normalized));
+    pageChangeSourceRef.current = "table";
     setCurrentPage(nextPage);
     setPageInput(String(nextPage));
   }
@@ -669,6 +715,7 @@ export default function TableView() {
     }
     const highlightPage = Math.floor(effectiveHighlightRow / ROWS_PER_PAGE) + 1;
     if (safeCurrentPage !== highlightPage) {
+      pageChangeSourceRef.current = "highlight";
       setCurrentPage(highlightPage);
       return;
     }
@@ -687,7 +734,12 @@ export default function TableView() {
       Math.min(multiHighlightRows.length - 1, activeHighlightCursor + offset),
     );
     if (nextCursor !== activeHighlightCursor) {
+      const targetRow = multiHighlightRows[nextCursor];
+      const highlightPage = Math.floor(targetRow / ROWS_PER_PAGE) + 1;
       setActiveHighlightCursor(nextCursor);
+      pageChangeSourceRef.current = "highlight";
+      setCurrentPage(highlightPage);
+      setPageInput(String(highlightPage));
     } else {
       jumpToHighlight();
     }
@@ -753,17 +805,16 @@ export default function TableView() {
   return (
     <div className="page-stack full-table-page">
       <div className="card" style={{ marginBottom: 12 }}>
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <div>
+        <div className="row table-view-header-row" style={{ justifyContent: "space-between" }}>
+          <div className="table-view-header-main">
             <div className="table-view-title">{headerTitle}</div>
             {isMultiHighlightMode && (
-              <div className="table-view-row-meta">
+              <div className="table-view-row-meta table-view-header-status">
                 <span>
-                  {multiHighlightLabel}:{" "}
-                  Viewing: {multiHighlightTotal.toLocaleString()} row(s)
+                  {multiHighlightLabel}: {multiHighlightTotal.toLocaleString()} results
                   {multiHighlightTruncated ? ` (showing first ${DEFAULT_MULTI_MAX_ROWS.toLocaleString()})` : ""}
                   {multiHighlightRows.length > 0
-                    ? ` • ${Math.min(activeHighlightCursor + 1, multiHighlightRows.length)} of ${multiHighlightRows.length}`
+                    ? ` • Selected ${Math.min(activeHighlightCursor + 1, multiHighlightRows.length)} of ${multiHighlightRows.length}`
                     : ""}
                 </span>
                 {multiHighlightRows.length > 0 && (
@@ -793,7 +844,7 @@ export default function TableView() {
               </div>
             )}
             {!isMultiHighlightMode && highlightedRow !== null && (
-              <div className="table-view-row-meta">
+              <div className="table-view-row-meta table-view-header-status">
                 <span>Viewing:</span>{" "}
                 <button
                   type="button"
@@ -807,7 +858,7 @@ export default function TableView() {
               </div>
             )}
             {!isMultiHighlightMode && highlightedRow === null && (
-              <div className="small" role="status" aria-live="polite" aria-atomic="true">
+              <div className="small table-view-header-status" role="status" aria-live="polite" aria-atomic="true">
                 {loading
                   ? "Loading table page..."
                   : data && data.rows.length > 0
@@ -853,6 +904,16 @@ export default function TableView() {
             columns={data.columns}
             rows={displayRows}
             rowIndices={filtered.rowIndices}
+            onRowClick={({ rowIndex, isHighlighted }) => {
+              if (!isMultiHighlightMode || !isHighlighted) {
+                return;
+              }
+              const nextCursor = multiHighlightRows.indexOf(rowIndex);
+              if (nextCursor !== -1) {
+                pageChangeSourceRef.current = "highlight";
+                setActiveHighlightCursor(nextCursor);
+              }
+            }}
             highlight={
               highlightedRows.length > 0
                 ? { rows: highlightedRows, cols: data.columns }
@@ -887,7 +948,10 @@ export default function TableView() {
             <button
               type="button"
               className="table-view-page-btn"
-              onClick={() => setCurrentPage(1)}
+              onClick={() => {
+                pageChangeSourceRef.current = "table";
+                setCurrentPage(1);
+              }}
               disabled={loading || safeCurrentPage <= 1}
               aria-label="First page"
               title="First page"
@@ -897,7 +961,10 @@ export default function TableView() {
             <button
               type="button"
               className="table-view-page-btn"
-              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+              onClick={() => {
+                pageChangeSourceRef.current = "table";
+                setCurrentPage(Math.max(1, safeCurrentPage - 1));
+              }}
               disabled={loading || safeCurrentPage <= 1}
               aria-label="Previous page"
               title="Previous page"
@@ -934,7 +1001,10 @@ export default function TableView() {
             <button
               type="button"
               className="table-view-page-btn"
-              onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+              onClick={() => {
+                pageChangeSourceRef.current = "table";
+                setCurrentPage(Math.min(totalPages, safeCurrentPage + 1));
+              }}
               disabled={loading || safeCurrentPage >= totalPages}
               aria-label="Next page"
               title="Next page"
@@ -944,7 +1014,10 @@ export default function TableView() {
             <button
               type="button"
               className="table-view-page-btn"
-              onClick={() => setCurrentPage(totalPages)}
+              onClick={() => {
+                pageChangeSourceRef.current = "table";
+                setCurrentPage(totalPages);
+              }}
               disabled={loading || safeCurrentPage >= totalPages}
               aria-label="Last page"
               title="Last page"
