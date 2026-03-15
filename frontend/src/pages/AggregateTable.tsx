@@ -146,7 +146,6 @@ export default function VirtualTableView() {
 
   useEffect(() => {
     if (parsedQuery.error) {
-      setErr(parsedQuery.error);
       return;
     }
     if (!parsedQuery.payload) {

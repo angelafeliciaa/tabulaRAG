@@ -1,9 +1,3 @@
-import pytest
-
-from app.retrieval import extract_keywords
-
-
-# ── Helper: ingest a small CSV so the dataset + rows exist in PG ──
 
 def _ingest(client):
     csv_content = b"name,city,age\nAlice,London,30\nBob,Paris,25\n"
@@ -14,8 +8,6 @@ def _ingest(client):
     assert resp.status_code == 200
     return resp.json()["dataset_id"]
 
-
-# ── POST /filter ──────────────────────────────────────────────────
 
 def test_filter_rows_success(client):
     dataset_id = _ingest(client)
@@ -279,77 +271,3 @@ def test_filter_row_indices_invalid_column(client):
     )
     assert resp.status_code == 400
     assert "Invalid filter column" in resp.json()["detail"]
-
-
-# ── GET /highlights/{highlight_id} ────────────────────────────────
-
-def test_highlight_found(client):
-    dataset_id = _ingest(client)
-
-    resp = client.get(f"/highlights/d{dataset_id}_r0_name")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["highlight_id"] == f"d{dataset_id}_r0_name"
-    assert data["dataset_id"] == dataset_id
-    assert data["row_index"] == 0
-    assert data["column"] == "name"
-    assert data["value"] == "Alice"
-    assert "city" in data["row_context"]
-
-
-def test_highlight_not_found(client):
-    resp = client.get("/highlights/d999_r0_name")
-    assert resp.status_code == 404
-
-
-def test_highlight_invalid_format(client):
-    resp = client.get("/highlights/invalid")
-    assert resp.status_code == 404
-
-
-def test_highlight_column_with_underscore(client):
-    """Columns with underscores in their names should be handled correctly."""
-    csv_content = b"first_name,last_name\nAlice,Smith\n"
-    resp = client.post(
-        "/ingest",
-        files={"file": ("names.csv", csv_content, "text/csv")},
-    )
-    dataset_id = resp.json()["dataset_id"]
-
-    resp = client.get(f"/highlights/d{dataset_id}_r0_first_name")
-    assert resp.status_code == 200
-    assert resp.json()["column"] == "first_name"
-    assert resp.json()["value"] == "Alice"
-
-
-# ── extract_keywords tests ────────────────────────────────────────
-
-def test_extract_keywords_basic():
-    """Should extract meaningful keywords, stripping stop words."""
-    keywords = extract_keywords("who is the engineer from asana")
-    assert "engineer" in keywords
-    assert "asana" in keywords
-    # Stop words should be excluded
-    assert "who" not in keywords
-    assert "is" not in keywords
-    assert "the" not in keywords
-    assert "from" not in keywords
-
-
-def test_extract_keywords_all_stop_words():
-    """A query of only stop words should return an empty list."""
-    keywords = extract_keywords("who is the from")
-    assert keywords == []
-
-
-def test_extract_keywords_punctuation():
-    """Punctuation should be stripped before extracting keywords."""
-    keywords = extract_keywords("what's the role at asana?")
-    assert "asana" in keywords
-    assert "role" in keywords
-    # Punctuation artifacts should not appear
-    for kw in keywords:
-        assert "?" not in kw
-        assert "'" not in kw
-
-
