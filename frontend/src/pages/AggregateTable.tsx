@@ -89,30 +89,34 @@ export default function VirtualTableView() {
   const [rows, setRows] = useState<TableRow[]>([]);
   const [resultTitle, setResultTitle] = useState<string>("Result");
   const [resultSubtitle, setResultSubtitle] = useState<string>("");
-  const [searchQuery, setSearchQuery] = useState("");
-
-  useEffect(() => {
+  const [searchState, setSearchState] = useState<{ key: string; value: string }>({
+    key: "",
+    value: "",
+  });
+  const parsedQuery = useMemo(() => {
     const params = new URLSearchParams(location.search);
     const encoded = params.get("q");
     if (!encoded) {
-      setErr("This URL is not valid or no longer valid");
-      return;
+      return { payload: null as AggregatePayload | FilterPayload | null, error: "This URL is not valid or no longer valid" };
     }
-
-    let payload: AggregatePayload | FilterPayload;
-
     try {
-      payload = decodePayload(encoded);
+      return { payload: decodePayload(encoded), error: null as string | null };
     } catch {
-      setErr("This URL is not valid or no longer valid");
+      return { payload: null as AggregatePayload | FilterPayload | null, error: "This URL is not valid or no longer valid" };
+    }
+  }, [location.search]);
+
+  useEffect(() => {
+    if (!parsedQuery.payload) {
       return;
     }
 
-    setErr(null);
+    const payload = parsedQuery.payload;
 
     if ("mode" in payload && payload.mode === "filter") {
       filterRows(payload)
         .then((result: FilterResponse) => {
+          setErr(null);
           setResultTitle(`Filter result: ${formatFilterSummary(payload.filters)}`);
           setResultSubtitle("");
 
@@ -139,6 +143,7 @@ export default function VirtualTableView() {
 
     aggregate(payload)
       .then((result: AggregateResponse) => {
+        setErr(null);
         const aggregatePayload = payload as AggregatePayload;
 
         const operationLabel =
@@ -198,12 +203,9 @@ export default function VirtualTableView() {
         setRows(remapped);
       })
       .catch((error: unknown) => setErr(getErrorMessage(error)));
-  }, [location.search]);
+  }, [parsedQuery.payload]);
 
-  useEffect(() => {
-    setSearchQuery("");
-  }, [location.search]);
-
+  const searchQuery = searchState.key === location.search ? searchState.value : "";
   const normalizedSearch = searchQuery.trim().toLowerCase();
   const filtered = useMemo(() => {
     if (!normalizedSearch) {
@@ -272,6 +274,11 @@ export default function VirtualTableView() {
 
   return (
     <div className="page-stack virtual-results-page">
+      {parsedQuery.error && !err && (
+        <p className="error" role="alert">
+          {parsedQuery.error}
+        </p>
+      )}
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="row virtual-results-header-row">
           <div className="virtual-results-header-main">
@@ -286,7 +293,11 @@ export default function VirtualTableView() {
               type="text"
               className="table-view-search"
               value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
+              onChange={(event) =>
+                setSearchState({
+                  key: location.search,
+                  value: event.target.value,
+                })}
               placeholder="Search for values"
               aria-label="Search results rows"
             />
