@@ -883,13 +883,24 @@ export default function TableView() {
     <div
       className={`page-stack full-table-page${isMultiHighlightMode && multiHighlightRows.length > 0 ? " has-highlight-nav" : ""}`}
     >
-      {(isMultiHighlightMode || highlightedRow !== null) && hasQueryContext && (
+      {hasQueryContext ? (
+        (isMultiHighlightMode || highlightedRow !== null) && (
+          <div className="table-view-back-row">
+            <Link className="table-view-context-btn" to={returnPath} aria-label="Back to Query Results" title="Back to Query Results">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M20 11H7.83l4.59-4.59a1 1 0 1 0-1.42-1.41l-6.3 6.29a1 1 0 0 0 0 1.42l6.3 6.29a1 1 0 1 0 1.42-1.41L7.83 13H20a1 1 0 1 0 0-2Z" fill="currentColor" />
+              </svg>
+              Back to Query Results
+            </Link>
+          </div>
+        )
+      ) : (
         <div className="table-view-back-row">
-          <Link className="table-view-context-btn" to={returnPath} aria-label="Back to Query Results" title="Back to Query Results">
+          <Link className="table-view-context-btn" to="/" aria-label="Back to home" title="Back to home">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <path d="M20 11H7.83l4.59-4.59a1 1 0 1 0-1.42-1.41l-6.3 6.29a1 1 0 0 0 0 1.42l6.3 6.29a1 1 0 1 0 1.42-1.41L7.83 13H20a1 1 0 1 0 0-2Z" fill="currentColor" />
             </svg>
-            Back to Query Results
+            Back to Home
           </Link>
         </div>
       )}

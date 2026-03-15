@@ -32,6 +32,35 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    let pointerActive = false;
+    function handlePointerDown() {
+      pointerActive = true;
+    }
+    function handleKeyDown() {
+      pointerActive = false;
+    }
+    function handleFocusIn(e: FocusEvent) {
+      if (!pointerActive) return;
+      const el = e.target as Node;
+      if (
+        el &&
+        el instanceof HTMLElement &&
+        (el.tagName === "BUTTON" || el.tagName === "A" || el.getAttribute("role") === "button")
+      ) {
+        requestAnimationFrame(() => el.blur());
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown, true);
+    document.addEventListener("focusin", handleFocusIn, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown, true);
+      document.removeEventListener("focusin", handleFocusIn, true);
+    };
+  }, []);
+
+  useEffect(() => {
     let mounted = true;
 
     async function checkStatus() {
@@ -58,10 +87,12 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Link className="app-brand" to="/" aria-label="Go to home">
-        <img src={logo} alt="" aria-hidden="true" />
-        <span className="app-brand-text">TabulaRAG</span>
-      </Link>
+      {location.pathname !== "/" && (
+        <Link className="app-brand" to="/" aria-label="Go to home">
+          <img src={logo} alt="" aria-hidden="true" />
+          <span className="app-brand-text">TabulaRAG</span>
+        </Link>
+      )}
 
       <a className="skip-link" href="#main-content">
         Skip to main content

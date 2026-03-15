@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   aggregate,
   filterRows,
@@ -7,7 +7,6 @@ import {
   type FilterResponse,
 } from "../api";
 import DataTable from "../components/DataTable";
-import openIcon from "../images/open.png";
 
 const MAX_MULTI_HIGHLIGHT_ROWS = 1000;
 
@@ -117,6 +116,7 @@ function formatFilterSummary(filters?: FilterConditionPayload[]): string {
 
 export default function VirtualTableView() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [err, setErr] = useState<string | null>(null);
   const [columns, setColumns] = useState<string[]>([]);
   const [rows, setRows] = useState<TableRow[]>([]);
@@ -335,30 +335,38 @@ export default function VirtualTableView() {
             </div>
           </div>
           <div className="table-view-tools virtual-results-tools">
-            <input
-              type="text"
-              className="table-view-search"
-              value={searchQuery}
-              onChange={(event) =>
-                setSearchState({
-                  key: location.search,
-                  value: event.target.value,
-                })}
-              placeholder="Search for values"
-              aria-label="Search results rows"
-            />
+            <div className="table-view-search-wrap">
+              <svg className="table-view-search-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="currentColor" />
+              </svg>
+              <input
+                type="text"
+                className="table-view-search"
+                value={searchQuery}
+                onChange={(event) =>
+                  setSearchState({
+                    key: location.search,
+                    value: event.target.value,
+                  })}
+                placeholder="Search for values"
+                aria-label="Search results rows"
+              />
+            </div>
           </div>
         </div>
       </div>
 
       {filtered.rows.length > 0 && (
-        <div className="table-area">
-          <DataTable
-            columns={columns}
-            rows={filtered.rows}
-            rowIndices={filtered.rowIndices}
-            sortable
-            rowAction={
+        <>
+          <div
+            className={`table-area aggregate-results-table${hasRowDrilldown ? " aggregate-results-table-clickable" : ""}`}
+          >
+            <DataTable
+              columns={columns}
+              rows={filtered.rows}
+              rowIndices={filtered.rowIndices}
+              sortable
+              onRowClick={
               hasRowDrilldown
                 ? ({ row }) => {
                   const sourceDataset =
@@ -373,44 +381,66 @@ export default function VirtualTableView() {
                         : null;
 
                   if (sourceDataset !== null && Array.isArray(row.__drilldown_filters)) {
-                    const label = String(row.__drilldown_label || "All matching rows");
                     const spec = encodePayload({
                       dataset_id: sourceDataset,
                       filters: row.__drilldown_filters,
-                      label,
+                      label: String(row.__drilldown_label || "All matching rows"),
                       max_rows: MAX_MULTI_HIGHLIGHT_ROWS,
                     });
-                    return (
-                      <Link
-                        className="result-row-open-link"
-                        to={`/tables/${sourceDataset}?highlight_mode=multi&highlight_spec=${encodeURIComponent(spec)}&return_to=${encodeURIComponent(`${location.pathname}${location.search}`)}`}
-                        aria-label={`Open ${label} rows in full table`}
-                        title="Open in full table"
-                      >
-                        <img src={openIcon} alt="" aria-hidden="true" />
-                      </Link>
+                    navigate(
+                      `/tables/${sourceDataset}?highlight_mode=multi&highlight_spec=${encodeURIComponent(spec)}&return_to=${encodeURIComponent(`${location.pathname}${location.search}`)}`,
                     );
+                    return;
                   }
 
                   if (sourceDataset !== null && sourceRow !== null) {
-                    return (
-                      <Link
-                        className="result-row-open-link"
-                        to={`/tables/${sourceDataset}?highlight_row=${sourceRow}&return_to=${encodeURIComponent(`${location.pathname}${location.search}`)}`}
-                        aria-label={`Open row ${sourceRow} in full table`}
-                        title="Open in full table"
-                      >
-                        <img src={openIcon} alt="" aria-hidden="true" />
-                      </Link>
+                    navigate(
+                      `/tables/${sourceDataset}?highlight_row=${sourceRow}&return_to=${encodeURIComponent(`${location.pathname}${location.search}`)}`,
                     );
                   }
-                  return null;
                 }
                 : undefined
-            }
-            rowActionLabel=""
-          />
-        </div>
+              }
+              rowAction={
+              hasRowDrilldown
+                ? ({ row }) => {
+                  const sourceDataset =
+                    typeof row.__dataset_id === "number" ? row.__dataset_id : null;
+                  const sourceRow =
+                    typeof row.__row_index === "number"
+                      ? row.__row_index
+                      : typeof row.row_index === "number"
+                        ? Number(row.row_index)
+                        : null;
+                  const hasLink =
+                    sourceDataset !== null &&
+                    (Array.isArray(row.__drilldown_filters) || sourceRow !== null);
+                  if (!hasLink) return null;
+                  return (
+                    <span
+                      className="aggregate-row-open-indicator"
+                      aria-hidden="true"
+                    >
+                      →
+                    </span>
+                  );
+                }
+                : undefined
+              }
+              rowActionLabel=""
+            />
+          </div>
+          {hasRowDrilldown && (
+            <p className="aggregate-view-full-table-note">
+              <span className="aggregate-view-full-table-note-icon" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                  <path d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z" />
+                </svg>
+              </span>
+              Click on a row to view ungrouped rows in a full table
+            </p>
+          )}
+        </>
       )}
     </div>
   );

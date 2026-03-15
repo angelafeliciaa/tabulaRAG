@@ -1492,7 +1492,7 @@ export default function Upload() {
             <div className="hero-title">TabulaRAG</div>
           </div>
           <div className="hero-subtitle">
-            A fast-ingesting tabular data RAG tool backed with cell citations.
+            Fast-ingesting tabular data RAG with cell-level citations
           </div>
         </div>
         <div className="panel">
@@ -1570,7 +1570,7 @@ export default function Upload() {
           <div className="hero-title">TabulaRAG</div>
         </div>
         <div className="hero-subtitle">
-          A fast-ingesting tabular data RAG tool backed with cell citations.
+          Fast-ingesting tabular data RAG with cell-level citations
         </div>
       </div>
 
@@ -1967,8 +1967,8 @@ export default function Upload() {
           <h3 style={{ marginBottom: 0 }}>Uploaded tables</h3>
           <div className="tables-header-controls">
             <label className="tables-search-input-wrap" aria-label="Search table name">
-              <svg viewBox="0 0 24 24" role="presentation" className="tables-search-icon">
-                <path d="M10.5 3a7.5 7.5 0 0 1 5.96 12.06l4.24 4.24a1 1 0 0 1-1.42 1.42l-4.24-4.24A7.5 7.5 0 1 1 10.5 3zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11z" />
+              <svg viewBox="0 0 24 24" role="presentation" className="tables-search-icon" aria-hidden="true">
+                <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="currentColor" />
               </svg>
               <input
                 type="text"
