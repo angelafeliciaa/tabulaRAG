@@ -695,6 +695,14 @@ def get_column_currency(row_data: Dict[str, Any], column: str) -> Optional[str]:
     return item.get("currency")
 
 
+def get_column_unit(row_data: Dict[str, Any], column: str) -> Optional[str]:
+    """If the column is typed as measurement, return its standard unit (e.g. kg, m); else None."""
+    item = get_typed_value(row_data, column)
+    if not item or item.get("type") != "measurement":
+        return None
+    return item.get("unit")
+
+
 def get_numeric_value(row_data: Dict[str, Any], column: str) -> Optional[float]:
     typed = get_typed_value(row_data, column)
     if typed:
@@ -717,6 +725,15 @@ def flatten_row_data_to_normalized(row_data: Dict[str, Any]) -> Dict[str, Any]:
     """Return a dict keyed by column with only normalized values (for API display where a single value per cell is expected)."""
     return {
         k: get_normalized_value(row_data, k)
+        for k in row_data
+        if not is_internal_key(k)
+    }
+
+
+def flatten_row_data_to_original(row_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a dict keyed by column with only original (raw) values (for filter result table preview)."""
+    return {
+        k: get_original_value(row_data, k)
         for k in row_data
         if not is_internal_key(k)
     }

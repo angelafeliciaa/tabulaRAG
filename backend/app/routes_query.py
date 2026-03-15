@@ -3,7 +3,6 @@ import base64
 import json
 import re
 from typing import Any, Dict, List, Literal, Optional
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -14,7 +13,9 @@ import app.db as app_db
 from app.db import SessionLocal
 from app.normalization import (
     flatten_row_data_to_normalized,
+    flatten_row_data_to_original,
     get_column_currency,
+    get_column_unit,
     strip_internal_fields,
 )
 
@@ -220,7 +221,9 @@ def _build_where_clauses(
 
       
 class FilterCondition(BaseModel):
-    column: str
+    column: str = Field(
+        description="Column name. Use normalized_name from GET /tables/{dataset_id}/columns (not original_name)."
+    )
     operator: FilterOperator
     value: Optional[str] = None  # None for IS NULL / IS NOT NULL
     logical_operator: Literal["AND", "OR"] = "AND"
@@ -312,12 +315,16 @@ class AggregateRequest(BaseModel):
     dataset_id: int = Field(
         description="ID of the dataset to aggregate. Call GET /tables first to discover valid IDs."
     )
-    filters: Optional[List[FilterCondition]] = None 
+    filters: Optional[List[FilterCondition]] = None
     operation: Literal["count", "sum", "avg", "min", "max"]
     metric_column: Optional[str] = Field(
-        default=None, description="Required for sum/avg/min/max"
+        default=None,
+        description="Column to aggregate (sum/avg/min/max). Use normalized_name from GET /tables/{dataset_id}/columns.",
     )
-    group_by: Optional[str] = None
+    group_by: Optional[str] = Field(
+        default=None,
+        description="Column to group by. Use normalized_name from GET /tables/{dataset_id}/columns.",
+    )
     group_by_date_part: Optional[Literal["month", "quarter", "year"]] = Field(
         default=None,
         description="When group_by is a date column (ISO YYYY-MM-DD), group by this part instead of full date: month (YYYY-MM), quarter (YYYY-QN), or year (YYYY).",
@@ -334,6 +341,10 @@ class AggregateResponse(BaseModel):
         default=None,
         description="Currency code for the metric column when it is money (e.g. USD, EUR). Use when phrasing the answer.",
     )
+    metric_unit: Optional[str] = Field(
+        default=None,
+        description="Standard unit for the metric column when it is a measurement (e.g. kg, m). Use when displaying aggregate values.",
+    )
     rowsResult: List[Dict[str, Any]] = Field(
         description="Result of the aggregate query. In your response, mention both the group_value and aggregate_value."
     )
@@ -348,7 +359,10 @@ class FilterRequest(BaseModel):
     dataset_id: int = Field(
         description="ID of the dataset to filter. Call GET /tables first to discover valid IDs."
     )
-    filters: Optional[List[FilterCondition]] = None
+    filters: Optional[List[FilterCondition]] = Field(
+        default=None,
+        description="Filter conditions. Use normalized_name for each column (from GET /tables/{dataset_id}/columns).",
+    )
     limit: int = 50
     offset: int = 0
 
@@ -392,7 +406,8 @@ def build_virtual_table_url(body: AggregateRequest, rows: List[Dict[str, Any]]) 
         "limit": 500,
     }
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-    return f"{PUBLIC_UI_BASE_URL}/tables/virtual?q={encoded}"
+    # Put payload in both query and hash so link still works if query string is stripped (e.g. by some clients after normalization)
+    return f"{PUBLIC_UI_BASE_URL}/tables/virtual?q={encoded}#q={encoded}"
 
 
 def build_filter_virtual_table_url(body: FilterRequest) -> str:
@@ -404,7 +419,7 @@ def build_filter_virtual_table_url(body: FilterRequest) -> str:
         "offset": 0,
     }
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-    return f"{PUBLIC_UI_BASE_URL}/tables/virtual?q={encoded}"
+    return f"{PUBLIC_UI_BASE_URL}/tables/virtual?q={encoded}#q={encoded}"
 
 def _enforce_list_tables_first() -> bool:
     return os.getenv("QUERY_ENFORCE_LIST_TABLES_FIRST", "false").strip().lower() in {
@@ -568,6 +583,7 @@ def aggregate_dataset(body: AggregateRequest):
     """
 
     metric_currency: Optional[str] = None
+    metric_unit: Optional[str] = None
     with SessionLocal() as db:
         rows_raw = db.execute(text(sql), params).mappings().all()
 
@@ -582,6 +598,7 @@ def aggregate_dataset(body: AggregateRequest):
                     row_data = json.loads(row_data)
                 if isinstance(row_data, dict):
                     metric_currency = get_column_currency(row_data, body.metric_column)
+                    metric_unit = get_column_unit(row_data, body.metric_column)
 
     rows: List[Dict[str, Any]] = []
     for r in rows_raw:
@@ -599,6 +616,7 @@ def aggregate_dataset(body: AggregateRequest):
         group_by_column=body.group_by,
         group_by_date_part=body.group_by_date_part,
         metric_currency=metric_currency,
+        metric_unit=metric_unit,
         rowsResult=rows,
         sql_query=_render_sql(sql, params),
         url=url,
@@ -663,14 +681,14 @@ def filter_dataset(body: FilterRequest):
         item = dict(r)
         row_data = item.get("row_data")
         if isinstance(row_data, dict):
-            item["row_data"] = flatten_row_data_to_normalized(row_data)
+            item["row_data"] = flatten_row_data_to_original(row_data)
         elif isinstance(row_data, str):
             try:
                 parsed = json.loads(row_data)
                 if isinstance(parsed, str):
                     parsed = json.loads(parsed)
                 item["row_data"] = (
-                    flatten_row_data_to_normalized(parsed) if isinstance(parsed, dict) else {}
+                    flatten_row_data_to_original(parsed) if isinstance(parsed, dict) else {}
                 )
             except Exception:
                 item["row_data"] = {}

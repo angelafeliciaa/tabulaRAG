@@ -464,6 +464,8 @@ export type AggregateResponse = {
   rowsResult: { group_value: string | null; aggregate_value: number }[];
   sql_query: string;
   url: string | null;
+  metric_currency?: string | null;
+  metric_unit?: string | null;
 };
 
 export async function aggregate(params: unknown): Promise<AggregateResponse> {
