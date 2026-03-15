@@ -48,6 +48,39 @@ function getErrorMessage(error: unknown): string {
   return String(error);
 }
 
+const CURRENCY_SYMBOL: Record<string, string> = {
+  USD: "$",
+  EUR: "€",
+  GBP: "£",
+  JPY: "¥",
+  INR: "₹",
+  CAD: "C$",
+  AUD: "A$",
+  CHF: "CHF",
+  CNY: "¥",
+  KRW: "₩",
+  THB: "฿",
+  TRY: "₺",
+  RUB: "₽",
+};
+
+function formatAggregateValue(
+  value: number,
+  currency: string | null | undefined,
+  unit: string | null | undefined,
+): string | number {
+  if (currency != null && currency !== "") {
+    const symbol = CURRENCY_SYMBOL[currency] ?? `${currency} `;
+    const formatted = value.toFixed(2);
+    return `${symbol}${formatted}`;
+  }
+  if (unit != null && unit !== "") {
+    const formatted = Number.isInteger(value) ? String(value) : String(value);
+    return `${formatted} ${unit}`;
+  }
+  return value;
+}
+
 function encodePayload(value: unknown): string {
   const raw = JSON.stringify(value);
   const bytes = new TextEncoder().encode(raw);
@@ -89,13 +122,18 @@ export default function VirtualTableView() {
   const [rows, setRows] = useState<TableRow[]>([]);
   const [resultTitle, setResultTitle] = useState<string>("Result");
   const [resultSubtitle, setResultSubtitle] = useState<string>("");
+
   const [searchState, setSearchState] = useState<{ key: string; value: string }>({
     key: "",
     value: "",
   });
   const parsedQuery = useMemo(() => {
     const params = new URLSearchParams(location.search);
-    const encoded = params.get("q");
+    let encoded = params.get("q");
+    if (!encoded && location.hash) {
+      const hashParams = new URLSearchParams(location.hash.slice(1));
+      encoded = hashParams.get("q");
+    }
     if (!encoded) {
       return { payload: null as AggregatePayload | FilterPayload | null, error: "This URL is not valid or no longer valid" };
     }
@@ -104,9 +142,13 @@ export default function VirtualTableView() {
     } catch {
       return { payload: null as AggregatePayload | FilterPayload | null, error: "This URL is not valid or no longer valid" };
     }
-  }, [location.search]);
+  }, [location.search, location.hash]);
 
   useEffect(() => {
+    if (parsedQuery.error) {
+      setErr(parsedQuery.error);
+      return;
+    }
     if (!parsedQuery.payload) {
       return;
     }
@@ -175,7 +217,11 @@ export default function VirtualTableView() {
           if (result.group_by_column) {
             nextRow[result.group_by_column] = row.group_value;
           }
-          nextRow[metricColLabel] = row.aggregate_value;
+          nextRow[metricColLabel] = formatAggregateValue(
+            row.aggregate_value,
+            result.metric_currency ?? null,
+            result.metric_unit ?? null,
+          );
           nextRow.__dataset_id = result.dataset_id;
 
           const drilldownFilters = [...(aggregatePayload.filters || [])];
@@ -203,7 +249,7 @@ export default function VirtualTableView() {
         setRows(remapped);
       })
       .catch((error: unknown) => setErr(getErrorMessage(error)));
-  }, [parsedQuery.payload]);
+  }, [parsedQuery]);
 
   const searchQuery = searchState.key === location.search ? searchState.value : "";
   const normalizedSearch = searchQuery.trim().toLowerCase();

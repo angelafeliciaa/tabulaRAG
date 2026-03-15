@@ -89,6 +89,10 @@
   box-sizing: border-box;
 }
 
+html {
+  overflow: hidden;
+}
+
 html,
 body {
   margin: 0;
@@ -2110,6 +2114,27 @@ ul {
     min-width: 240px;
 }
 
+.table-view-value-mode-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.table-view-value-mode-label {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.table-view-value-mode-toggle select {
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-elev-2);
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+}
+
 .table-view-context-btn {
     display: inline-flex;
     align-items: center;
@@ -2453,6 +2478,10 @@ thead th {
   background: var(--table-head);
   color: var(--text);
   z-index: 1;
+}
+
+.table-header-cell-preserve-ws {
+  white-space: pre-wrap;
 }
 
 tbody th[scope="row"] {

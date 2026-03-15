@@ -2,13 +2,13 @@ import json
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 
-from app.db import SessionLocal
+from app.db import SessionLocal, engine
 from app.index_jobs import clear_index_job, get_index_jobs
 from app.models import Dataset, DatasetColumn, DatasetRow
 from app.qdrant_client import delete_collection, get_collection_point_count
-from app.typed_values import strip_internal_fields
+from app.normalization import strip_internal_fields
 from app.name_guard import normalize_dataset_name_or_raise
 
 router = APIRouter()
@@ -16,6 +16,28 @@ router = APIRouter()
 
 class RenameRequest(BaseModel):
     name: str
+
+
+def _slice_column_expr(column_name: str) -> str:
+    """SQL expression for normalized value of a column from row_data (for ORDER BY in slice)."""
+    escaped = column_name.replace("'", "''")
+    if engine.dialect.name == "sqlite":
+        json_key = column_name.replace("\\", "\\\\").replace('"', '\\"')
+        return f"COALESCE(json_extract(row_data, '$.\"{json_key}\".normalized'), json_extract(row_data, '$.\"{json_key}\"'))"
+    return f"COALESCE((row_data::jsonb -> '{escaped}') ->> 'normalized', row_data::jsonb ->> '{escaped}')"
+
+
+def _slice_order_by_clause(sort_column: str, sort_direction: str) -> str:
+    """ORDER BY clause for slice: numeric sort when value looks like a number, else text (so dates like 2022-01-04 sort correctly)."""
+    col = _slice_column_expr(sort_column)
+    dir_upper = sort_direction.upper()
+    nulls = "NULLS LAST" if dir_upper == "ASC" else "NULLS FIRST"
+    if engine.dialect.name == "sqlite":
+        # SQLite: order by text only to avoid casting dates (e.g. 2022-01-04) to real
+        return f"{col} {dir_upper}"
+    # PostgreSQL: only cast to double when value matches numeric pattern; else NULL so we sort by text (dates, text)
+    numeric_expr = f"(CASE WHEN TRIM({col}) ~ '^[-+]?[0-9]*\\.?[0-9]+$' THEN ({col}::double precision) ELSE NULL END)"
+    return f"{numeric_expr} {dir_upper} {nulls}, {col} {dir_upper}"
 
 
 def _normalize_row_data(raw: Any) -> Dict[str, Any]:
@@ -90,14 +112,21 @@ def get_cols_for_dataset(dataset_id: int):
 
     return {
         "dataset_id": dataset_id,
-        "columns": [{"column_index": c.column_index, "name": c.name} for c in columns],
+        "columns": [
+            {
+                "column_index": c.column_index,
+                "original_name": c.original_name,
+                "normalized_name": c.normalized_name,
+            }
+            for c in columns
+        ],
     }
 
 
 @router.get(
     "/tables/{dataset_id}/slice",
     summary="Browse raw rows from a dataset",
-    description="Returns rows in order by row index. Use this when the user wants to see or explore raw data, not for analytical questions like sums or rankings.",
+    description="Returns rows in order by row index (or by sort_column when provided). Use sort_column + sort_direction for multipage sorting.",
 )
 def get_table_slice(
     dataset_id: int,
@@ -108,27 +137,62 @@ def get_table_slice(
     limit: int = Query(
         default=30, description="Number of rows to return. Default is 30."
     ),
+    sort_column: Optional[str] = Query(
+        default=None,
+        description="Normalized column name to sort by. When set, rows are ordered by this column (multipage sort).",
+    ),
+    sort_direction: Optional[str] = Query(
+        default="asc",
+        description="Sort direction: 'asc' or 'desc'. Used only when sort_column is set.",
+    ),
 ):
     with SessionLocal() as db:
         dataset = db.get(Dataset, dataset_id)
         if not dataset:
             raise HTTPException(status_code=404, detail="Table not found")
 
-        rows = (
-            db.execute(
-                select(DatasetRow)
-                .where(DatasetRow.dataset_id == dataset_id)
-                .order_by(DatasetRow.row_index)
-                .offset(offset)
-                .limit(limit)
+        if sort_column and sort_direction:
+            # Validate sort_column exists
+            col_match = (
+                db.execute(
+                    select(DatasetColumn)
+                    .where(DatasetColumn.dataset_id == dataset_id)
+                    .where(DatasetColumn.normalized_name == sort_column)
+                )
+                .scalars()
+                .first()
             )
-            .scalars()
-            .all()
-        )
+            if not col_match:
+                raise HTTPException(status_code=400, detail=f"Unknown sort_column: {sort_column}")
+            dir_norm = sort_direction.lower() in ("desc", "descending") and "desc" or "asc"
+            order_sql = _slice_order_by_clause(sort_column, dir_norm)
+            rows = (
+                db.execute(
+                    select(DatasetRow)
+                    .where(DatasetRow.dataset_id == dataset_id)
+                    .order_by(text(order_sql))
+                    .offset(offset)
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
+        else:
+            rows = (
+                db.execute(
+                    select(DatasetRow)
+                    .where(DatasetRow.dataset_id == dataset_id)
+                    .order_by(DatasetRow.row_index)
+                    .offset(offset)
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
 
         columns = (
             db.execute(
-                select(DatasetColumn.name)
+                select(DatasetColumn)
                 .where(DatasetColumn.dataset_id == dataset_id)
                 .order_by(DatasetColumn.column_index)
             )
@@ -144,10 +208,17 @@ def get_table_slice(
             "column_count": dataset.column_count,
             "has_header": dataset.has_header,
             "rows": [
-                {"row_index": r.row_index, "data": _normalize_row_data(r.row_data)}
+                {
+                    "row_index": r.row_index,
+                    "data": strip_internal_fields(r.row_data),
+                }
                 for r in rows
             ],
-            "columns": columns,
+            "columns": [c.normalized_name for c in columns],
+            "columns_meta": [
+                {"original_name": c.original_name, "normalized_name": c.normalized_name}
+                for c in columns
+            ],
         }
 
 

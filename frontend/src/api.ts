@@ -92,6 +92,11 @@ export interface TableSummary {
   created_at: string;
 }
 
+export interface ColumnMeta {
+  original_name: string | null;
+  normalized_name: string;
+}
+
 export interface TableSlice {
   dataset_id: number;
   offset: number;
@@ -100,7 +105,10 @@ export interface TableSlice {
   column_count: number;
   has_header: boolean;
   columns: string[];
+  columns_meta?: ColumnMeta[];
   rows: TableRow[];
+  /** When server-side sort is used, row indices for each row (for correct # column). */
+  row_indices?: number[];
 }
 
 export interface TableIndexStatus {
@@ -129,6 +137,7 @@ interface TableSliceApiResponse {
   column_count: number;
   has_header: boolean;
   columns: string[];
+  columns_meta?: ColumnMeta[];
   rows: TableSliceApiRow[];
 }
 
@@ -152,6 +161,25 @@ function normalizeRowData(raw: unknown): TableRow {
   }
 
   return {};
+}
+
+/** Flatten row cells that are { original, normalized } to a single value (normalized). */
+function flattenRowToNormalized(row: TableRow): TableRow {
+  const out: TableRow = {};
+  for (const [col, val] of Object.entries(row)) {
+    if (
+      val != null
+      && typeof val === "object"
+      && !Array.isArray(val)
+      && "normalized" in val
+      && "original" in val
+    ) {
+      out[col] = (val as { normalized?: unknown }).normalized;
+    } else {
+      out[col] = val;
+    }
+  }
+  return out;
 }
 
 export interface HighlightResponse {
@@ -317,16 +345,31 @@ export async function listIndexStatus(
   return (await res.json()) as TableIndexStatus[];
 }
 
+export type SliceOptions = {
+  /** If true (default), flatten each row to normalized values only. If false, return raw { original, normalized } per cell for toggle support. */
+  flatten?: boolean;
+};
+
+export type SliceSort = {
+  sortColumn: string;
+  sortDirection: "asc" | "desc";
+};
+
 export async function getSlice(
   datasetId: number,
   rowFrom: number,
   rowTo: number,
+  options?: SliceOptions & { sort?: SliceSort | null },
 ): Promise<TableSlice> {
   const offset = Math.max(0, rowFrom);
   const limit = Math.max(1, rowTo - rowFrom);
   const url = new URL(`${API_BASE}/tables/${datasetId}/slice`);
   url.searchParams.set("offset", String(offset));
   url.searchParams.set("limit", String(limit));
+  if (options?.sort?.sortColumn) {
+    url.searchParams.set("sort_column", options.sort.sortColumn);
+    url.searchParams.set("sort_direction", options.sort.sortDirection);
+  }
 
   const res = await authFetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) {
@@ -334,6 +377,15 @@ export async function getSlice(
   }
 
   const data = (await res.json()) as TableSliceApiResponse;
+  const rawRows = (data.rows || []).map((row) =>
+    normalizeRowData(row.data ?? row.row_data),
+  );
+  const flattenToNormalized = options?.flatten !== false;
+  const rows = flattenToNormalized
+    ? rawRows.map(flattenRowToNormalized)
+    : rawRows;
+  const row_indices = (data.rows || []).map((r) => r.row_index);
+
   return {
     dataset_id: data.dataset_id,
     offset: data.offset,
@@ -342,9 +394,9 @@ export async function getSlice(
     column_count: data.column_count,
     has_header: data.has_header,
     columns: data.columns,
-    rows: (data.rows || []).map((row) =>
-      normalizeRowData(row.data ?? row.row_data),
-    ),
+    columns_meta: data.columns_meta,
+    rows,
+    row_indices,
   };
 }
 
@@ -412,6 +464,8 @@ export type AggregateResponse = {
   rowsResult: { group_value: string | null; aggregate_value: number }[];
   sql_query: string;
   url: string | null;
+  metric_currency?: string | null;
+  metric_unit?: string | null;
 };
 
 export async function aggregate(params: unknown): Promise<AggregateResponse> {

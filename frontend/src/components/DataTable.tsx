@@ -2,12 +2,24 @@ import { type MouseEvent, type ReactNode, useMemo, useState } from "react";
 
 type DataTableProps = {
   columns: string[];
+  /** Optional display labels for column headers (same order as columns). Use when showing original vs normalized names. */
+  columnLabels?: string[];
   rows: Record<string, unknown>[];
+  /** When set, sorting uses these values (e.g. normalized) instead of rows. Must match rows in length and order. */
+  sortRows?: Record<string, unknown>[];
   caption?: string;
   highlight?: { rows: number[]; cols: string[] };
   rowOffset?: number;
   rowIndices?: number[];
   sortable?: boolean;
+  /** When "server", rows are already sorted by the server; we show sort state and call onSortChange on header click (no client reorder). */
+  sortMode?: "client" | "server";
+  /** Current sort column when sortMode is "server". */
+  serverSortColumn?: string | null;
+  /** Current sort direction when sortMode is "server". */
+  serverSortDirection?: "asc" | "desc";
+  /** Called when user clicks sort header and sortMode is "server". Pass null column to clear sort. */
+  onSortChange?: (column: string | null, direction: "asc" | "desc") => void;
   formatCellValue?: (column: string, value: unknown) => string;
   onCellContextMenu?: (
     event: MouseEvent<HTMLTableCellElement>,
@@ -188,22 +200,35 @@ function inferSortKind(rows: Record<string, unknown>[], column: string): SortKin
 
 export default function DataTable({
   columns,
+  columnLabels,
   rows,
+  sortRows,
   caption,
   highlight,
   rowOffset = 0,
   rowIndices,
   sortable = false,
+  sortMode = "client",
+  serverSortColumn = null,
+  serverSortDirection = "asc",
+  onSortChange,
   formatCellValue,
   onCellContextMenu,
   onRowClick,
   rowAction,
   rowActionLabel = "",
 }: DataTableProps) {
-  const [sortColumn, setSortColumn] = useState<string | null>(null);
-  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+  const labels = columnLabels ?? columns;
+  const [clientSortColumn, setClientSortColumn] = useState<string | null>(null);
+  const [clientSortDirection, setClientSortDirection] = useState<SortDirection>("asc");
   const highlightedRows = new Set(highlight?.rows || []);
   const highlightedCols = new Set(highlight?.cols || []);
+
+  const isServerSort = sortable && sortMode === "server";
+  const sortColumn = isServerSort ? serverSortColumn : clientSortColumn;
+  const sortDirection = isServerSort ? serverSortDirection : clientSortDirection;
+
+  const rowsForSort = sortRows != null && sortRows.length === rows.length ? sortRows : rows;
 
   const displayRows = useMemo(() => {
     const entries = rows.map((row, index) => ({
@@ -215,15 +240,15 @@ export default function DataTable({
       originalIndex: index,
     }));
 
-    if (!sortable || !sortColumn) {
+    if (!sortable || !sortColumn || isServerSort) {
       return entries;
     }
 
     const sign = sortDirection === "asc" ? 1 : -1;
-    const sortKind = inferSortKind(rows, sortColumn);
+    const sortKind = inferSortKind(rowsForSort, sortColumn);
     return [...entries].sort((left, right) => {
-      const leftValue = getSortableValue(left.row[sortColumn]);
-      const rightValue = getSortableValue(right.row[sortColumn]);
+      const leftValue = getSortableValue(rowsForSort[left.originalIndex][sortColumn]);
+      const rightValue = getSortableValue(rowsForSort[right.originalIndex][sortColumn]);
 
       if (leftValue.kind === "empty" && rightValue.kind === "empty") {
         return left.originalIndex - right.originalIndex;
@@ -257,20 +282,30 @@ export default function DataTable({
 
       return left.originalIndex - right.originalIndex;
     });
-  }, [rowIndices, rowOffset, rows, sortColumn, sortDirection, sortable]);
+  }, [rowIndices, rowOffset, rows, rowsForSort, sortColumn, sortDirection, sortable, isServerSort]);
 
-  function toggleSort(column: string) {
-    if (sortColumn !== column) {
-      setSortColumn(column);
-      setSortDirection("asc");
+  function handleSortClick(column: string) {
+    if (isServerSort && onSortChange) {
+      if (serverSortColumn !== column) {
+        onSortChange(column, "asc");
+      } else if (serverSortDirection === "asc") {
+        onSortChange(column, "desc");
+      } else {
+        onSortChange(null, "asc");
+      }
       return;
     }
-    if (sortDirection === "asc") {
-      setSortDirection("desc");
+    if (clientSortColumn !== column) {
+      setClientSortColumn(column);
+      setClientSortDirection("asc");
       return;
     }
-    setSortColumn(null);
-    setSortDirection("asc");
+    if (clientSortDirection === "asc") {
+      setClientSortDirection("desc");
+      return;
+    }
+    setClientSortColumn(null);
+    setClientSortDirection("asc");
   }
 
   return (
@@ -282,20 +317,20 @@ export default function DataTable({
           </caption>
           <thead>
             <tr>
-              <th scope="col" className="mono" aria-label="Row number">
-                #
-              </th>
-              {columns.map((column) => {
+              <th className="mono">#</th>
+              {columns.map((column, i) => {
+                const label = labels[i] ?? column;
                 if (!sortable) {
                   return (
-                    <th key={column} scope="col">
-                      {column}
+                    <th key={column} className="table-header-cell-preserve-ws">
+                      {label}
                     </th>
                   );
                 }
                 return (
                   <th
                     key={column}
+                    className="table-header-cell-preserve-ws"
                     scope="col"
                     aria-sort={
                       sortColumn === column
@@ -308,10 +343,10 @@ export default function DataTable({
                     <button
                       type="button"
                       className="table-sort-button"
-                      onClick={() => toggleSort(column)}
-                      title={`Sort by ${column}`}
+                      onClick={() => handleSortClick(column)}
+                      title={`Sort by ${label}`}
                     >
-                      <span>{column}</span>
+                      <span>{label}</span>
                       <span className="table-sort-arrow" aria-hidden="true">
                         {sortColumn === column ? (sortDirection === "asc" ? "▲" : "▼") : "▴"}
                       </span>

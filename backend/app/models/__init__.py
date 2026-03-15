@@ -44,13 +44,14 @@ class DatasetColumn(Base):
     id = Column(Integer, primary_key=True)
     dataset_id = Column(Integer, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False)
     column_index = Column(Integer, nullable=False)
-    name = Column(String(255), nullable=False)
+    original_name = Column(String(512), nullable=True)  # raw header from CSV
+    normalized_name = Column(String(255), nullable=False)  # deduped, safe key for row_data
 
     dataset = relationship("Dataset", back_populates="columns")
 
     __table_args__ = (
         UniqueConstraint("dataset_id", "column_index", name="uq_dataset_columns_index"),
-        UniqueConstraint("dataset_id", "name", name="uq_dataset_columns_name"),
+        UniqueConstraint("dataset_id", "normalized_name", name="uq_dataset_columns_name"),
         Index("ix_dataset_columns_dataset_id", "dataset_id"),
     )
 

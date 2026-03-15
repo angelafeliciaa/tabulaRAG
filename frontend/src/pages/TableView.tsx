@@ -12,6 +12,7 @@ import {
 import DataTable from "../components/DataTable";
 
 type DateViewMode = "default" | "mm-dd-yyyy" | "mon-dd-yyyy";
+type ValueMode = "normalized" | "original";
 type DateMenuState = { x: number; y: number } | null;
 type FilterConditionPayload = {
   column: string;
@@ -48,6 +49,36 @@ const DATE_VIEW_OPTIONS: Array<{ value: DateViewMode; label: string }> = [
   { value: "mm-dd-yyyy", label: "MM-DD-YYYY" },
   { value: "mon-dd-yyyy", label: "Jan 12, 2002" },
 ];
+
+function resolveCellValue(
+  value: unknown,
+  mode: ValueMode,
+): unknown {
+  if (
+    value != null
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && "normalized" in value
+    && "original" in value
+  ) {
+    const o = value as { original?: unknown; normalized?: unknown };
+    return mode === "original" ? o.original : o.normalized;
+  }
+  return value;
+}
+
+function flattenRowsByValueMode(
+  rows: Record<string, unknown>[],
+  valueMode: ValueMode,
+): Record<string, unknown>[] {
+  return rows.map((row) => {
+    const out: Record<string, unknown> = {};
+    for (const [col, val] of Object.entries(row)) {
+      out[col] = resolveCellValue(val, valueMode);
+    }
+    return out;
+  });
+}
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -283,6 +314,9 @@ export default function TableView() {
   const [pageInput, setPageInput] = useState("1");
   const [showScrollHint, setShowScrollHint] = useState(false);
   const [tableAtBottom, setTableAtBottom] = useState(false);
+  const [valueMode, setValueMode] = useState<ValueMode>("normalized");
+  const [sortColumn, setSortColumn] = useState<string | null>(null);
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [multiHighlightRows, setMultiHighlightRows] = useState<number[]>([]);
   const [multiHighlightTotal, setMultiHighlightTotal] = useState(0);
   const [multiHighlightTruncated, setMultiHighlightTruncated] = useState(false);
@@ -411,6 +445,8 @@ export default function TableView() {
     setCurrentPage(initialPage);
     setPageInput(String(initialPage));
     setSearchQuery("");
+    setSortColumn(null);
+    setSortDirection("asc");
   }, [numericDatasetId, highlightedRow, isMultiHighlightMode]);
 
   useEffect(() => {
@@ -457,8 +493,12 @@ export default function TableView() {
 
     const pageOffset = (currentPage - 1) * ROWS_PER_PAGE;
     const pageEndExclusive = pageOffset + ROWS_PER_PAGE;
+    const sort =
+      sortColumn != null
+        ? { sortColumn, sortDirection }
+        : null;
 
-    getSlice(numericDatasetId, pageOffset, pageEndExclusive)
+    getSlice(numericDatasetId, pageOffset, pageEndExclusive, { flatten: false, sort })
       .then((slice) => {
         if (!mounted) {
           return;
@@ -487,7 +527,7 @@ export default function TableView() {
     return () => {
       mounted = false;
     };
-  }, [numericDatasetId, currentPage]);
+  }, [numericDatasetId, currentPage, sortColumn, sortDirection]);
 
   const normalizedSearch = searchQuery.trim().toLowerCase();
   const effectiveRowCount = Math.max(tableRowCount, Math.max(0, data?.row_count || 0));
@@ -501,6 +541,14 @@ export default function TableView() {
       ? [highlightedRow]
       : [];
   const pageInputWidthCh = Math.max(2, String(totalPages).length + 1);
+  const resolvedRows = useMemo(
+    () => (data ? flattenRowsByValueMode(data.rows, valueMode) : []),
+    [data, valueMode],
+  );
+  const normalizedRows = useMemo(
+    () => (data ? flattenRowsByValueMode(data.rows, "normalized") : []),
+    [data],
+  );
   const headerTitle = useMemo(() => {
     if (isMultiHighlightMode) {
       const label = (multiHighlightLabel || parsedMultiSpec?.label || "Result").trim();
@@ -518,34 +566,35 @@ export default function TableView() {
     return tableName || "Table";
   }, [highlightedRow, isMultiHighlightMode, multiHighlightLabel, parsedMultiSpec?.label, returnQueryMode, sourceQueryTitle, tableName]);
   const dateColumns = useMemo(
-    () => (data ? detectDateColumns(data.rows, data.columns) : new Set<string>()),
-    [data],
+    () => (data ? detectDateColumns(resolvedRows, data.columns) : new Set<string>()),
+    [data, resolvedRows],
   );
   const filtered = useMemo(() => {
     if (!data) {
-      return { rows: [], rowIndices: [] as number[] };
+      return { rows: [] as Record<string, unknown>[], rowIndices: [] as number[] };
     }
+    const indices = data.row_indices ?? resolvedRows.map((_, index) => data.offset + index);
     if (!normalizedSearch) {
       return {
-        rows: data.rows,
-        rowIndices: data.rows.map((_, index) => data.offset + index),
+        rows: resolvedRows,
+        rowIndices: indices,
       };
     }
 
     const nextRows: Record<string, unknown>[] = [];
     const nextRowIndices: number[] = [];
-    for (let i = 0; i < data.rows.length; i += 1) {
-      const row = data.rows[i];
+    for (let i = 0; i < resolvedRows.length; i += 1) {
+      const row = resolvedRows[i];
       const matches = Object.values(row).some((value) =>
         String(value ?? "").toLowerCase().includes(normalizedSearch),
       );
       if (matches) {
         nextRows.push(row);
-        nextRowIndices.push(data.offset + i);
+        nextRowIndices.push(indices[i]);
       }
     }
     return { rows: nextRows, rowIndices: nextRowIndices };
-  }, [data, normalizedSearch]);
+  }, [data, normalizedSearch, resolvedRows]);
 
   const displayRows = useMemo(() => {
     if (!data || dateViewMode === "default" || dateColumns.size === 0) {
@@ -578,6 +627,16 @@ export default function TableView() {
       return next;
     });
   }, [data, dateColumns, dateViewMode, filtered.rows]);
+
+  const sortRows = useMemo(() => {
+    if (!data || normalizedRows.length === 0) {
+      return undefined;
+    }
+    if (data.row_indices) {
+      return normalizedRows;
+    }
+    return filtered.rowIndices.map((ri) => normalizedRows[ri - data.offset]);
+  }, [data, filtered.rowIndices, normalizedRows]);
 
   useEffect(() => {
     if (!dateMenu) {
@@ -669,12 +728,20 @@ export default function TableView() {
       `[data-row-index="${effectiveHighlightRow}"]`,
     ) as HTMLElement | null;
 
-    if (!targetElement) {
+    const container = tableAreaRef.current?.querySelector(".table-scroll") as HTMLDivElement | null;
+    if (!targetElement || !container) {
       return;
     }
 
     window.setTimeout(() => {
-      targetElement.scrollIntoView({ behavior: "smooth", block: "center" });
+      const targetRect = targetElement.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const scrollOffset =
+        container.scrollTop +
+        (targetRect.top - containerRect.top) +
+        targetRect.height / 2 -
+        container.clientHeight / 2;
+      container.scrollTo({ top: Math.max(0, scrollOffset), behavior: "smooth" });
     }, 0);
   }, [data, effectiveHighlightRow, displayRows.length, dateViewMode]);
 
@@ -722,7 +789,17 @@ export default function TableView() {
     const targetElement = document.querySelector(
       `[data-row-index="${effectiveHighlightRow}"]`,
     ) as HTMLElement | null;
-    targetElement?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const container = tableAreaRef.current?.querySelector(".table-scroll") as HTMLDivElement | null;
+    if (targetElement && container) {
+      const targetRect = targetElement.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const scrollOffset =
+        container.scrollTop +
+        (targetRect.top - containerRect.top) +
+        targetRect.height / 2 -
+        container.clientHeight / 2;
+      container.scrollTo({ top: Math.max(0, scrollOffset), behavior: "smooth" });
+    }
   }
 
   function moveMultiHighlightCursor(offset: number) {
@@ -868,6 +945,17 @@ export default function TableView() {
             )}
           </div>
           <div className="table-view-tools">
+            <label className="table-view-value-mode-toggle">
+              <span className="table-view-value-mode-label">Values:</span>
+              <select
+                value={valueMode}
+                onChange={(e) => setValueMode(e.target.value as ValueMode)}
+                aria-label="Show original or normalized values"
+              >
+                <option value="normalized">Normalized</option>
+                <option value="original">Original</option>
+              </select>
+            </label>
             <input
               type="text"
               className="table-view-search"
@@ -902,7 +990,17 @@ export default function TableView() {
         <div className="table-area full-table-area" ref={tableAreaRef}>
           <DataTable
             columns={data.columns}
+            columnLabels={
+              data.columns_meta
+                ? data.columns_meta.map((m) =>
+                    valueMode === "original"
+                      ? (m.original_name ?? m.normalized_name)
+                      : m.normalized_name,
+                  )
+                : undefined
+            }
             rows={displayRows}
+            sortRows={sortRows}
             rowIndices={filtered.rowIndices}
             onRowClick={({ rowIndex, isHighlighted }) => {
               if (!isMultiHighlightMode || !isHighlighted) {
@@ -920,6 +1018,15 @@ export default function TableView() {
                 : undefined
             }
             sortable
+            sortMode="server"
+            serverSortColumn={sortColumn}
+            serverSortDirection={sortDirection}
+            onSortChange={(column, direction) => {
+              setSortColumn(column);
+              setSortDirection(direction);
+              setCurrentPage(1);
+              setPageInput("1");
+            }}
             caption={`${tableName || "Table"} page ${safeCurrentPage}. ${displayRows.length} row${displayRows.length === 1 ? "" : "s"} shown.`}
             onCellContextMenu={(event, payload) => {
               if (!dateColumns.has(payload.column) || !parseDateToDate(payload.value)) {

@@ -3,7 +3,7 @@ import io
 import json
 import logging
 import os
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Optional, Tuple
 import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +11,7 @@ from sqlalchemy import insert, text, select
 from contextlib import asynccontextmanager
 from app.db import SessionLocal, engine
 from app.dataset_state import (
+    ensure_dataset_columns_normalized_columns,
     ensure_dataset_index_ready_column,
     set_dataset_index_ready,
 )
@@ -28,7 +29,13 @@ from app.qdrant_client import get_collection_point_count
 from fastapi_mcp import FastApiMCP
 from app.routes_tables import router as tables_router
 from app.routes_query import router as query_router
-from app.typed_values import normalize_row_obj
+from app.normalization import (
+    infer_date_formats_for_columns,
+    infer_measurement_columns,
+    infer_money_columns,
+    normalize_headers,
+    normalize_row_obj,
+)
 from app.name_guard import normalize_dataset_name_or_raise
 from app.auth import require_auth, exchange_github_code, create_jwt, GITHUB_CLIENT_ID
 
@@ -42,6 +49,7 @@ INDEX_WORKER_CONCURRENCY = max(1, int(os.getenv("INDEX_WORKER_CONCURRENCY", "4")
 async def lifespan(app: FastAPI):
     global _index_worker
     Base.metadata.create_all(bind=engine)
+    ensure_dataset_columns_normalized_columns()
     ensure_dataset_index_ready_column()
     try:
         from app.embeddings import get_model
@@ -114,24 +122,6 @@ def validate_filename(filename: str) -> None:
         )
 
 
-# normalizes header names by stripping whitespace, replacing empty names with col_{index}, and ensuring uniqueness by appending _{count} to duplicates
-def _normalize_headers(headers: List[str]) -> List[str]:
-    seen = {}
-    normalized = []
-    for idx, header in enumerate(headers):
-        base = (header or "").strip()
-        if not base:
-            base = f"col_{idx + 1}"
-        key = base
-        if key in seen:
-            seen[key] += 1
-            key = f"{base}_{seen[base]}"
-        else:
-            seen[key] = 1
-        normalized.append(key)
-    return normalized
-
-
 ROW_INSERT_BATCH_SIZE = int(os.getenv("ROW_INSERT_BATCH_SIZE", "20000"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
 FILE_SNIFF_BYTES = int(os.getenv("FILE_SNIFF_BYTES", "65536"))
@@ -198,29 +188,29 @@ def _validate_upload_content(upload: UploadFile) -> None:
 def _iter_rows(
     upload: UploadFile,
     has_header: bool,
-) -> Tuple[List[str], Iterable[List[str]], str]:
+) -> Tuple[List[str], List[str], Iterable[List[str]], str]:
+    """Return (raw_headers, normalized_headers, rows_iter, delimiter)."""
     validate_filename(upload.filename or "")
     _validate_upload_content(upload)
     detected_delimiter = _detect_delimiter(upload.filename)
     if detected_delimiter not in [",", "\t"]:
         raise HTTPException(status_code=400, detail="Delimiter must be comma or tab.")
 
-    # Use TextIOWrapper to read the uploaded file as text with UTF-8 encoding, which allows csv.reader to process it correctly.
     text_stream = io.TextIOWrapper(upload.file, encoding="utf-8-sig", newline="")
     reader = csv.reader(text_stream, delimiter=detected_delimiter)
 
     try:
-        first_row = next(
-            reader
-        )  # gets the first row of the file to determine headers and column count
+        first_row = next(reader)
     except StopIteration:
         raise HTTPException(status_code=400, detail="Empty file.")
 
     if has_header:
-        headers = _normalize_headers(first_row)
+        raw_headers = [str(h) if h is not None else "" for i, h in enumerate(first_row)]
+        normalized_headers = normalize_headers(first_row)
         rows_iter = reader
     else:
-        headers = _normalize_headers([f"col_{i + 1}" for i in range(len(first_row))])
+        raw_headers = [f"col_{i + 1}" for i in range(len(first_row))]
+        normalized_headers = normalize_headers(raw_headers)
 
         def row_iter() -> Iterable[List[str]]:
             yield first_row
@@ -228,17 +218,33 @@ def _iter_rows(
 
         rows_iter = row_iter()
 
-    return headers, rows_iter, detected_delimiter
+    return raw_headers, normalized_headers, rows_iter, detected_delimiter
 
 
-def _build_row_obj(headers: List[str], row: List[str]) -> dict:
-    return normalize_row_obj(headers, row)
+def _build_row_obj(
+    normalized_headers: List[str],
+    row: List[str],
+    date_format_by_column: Optional[dict] = None,
+    money_columns: Optional[set] = None,
+    measurement_columns: Optional[set] = None,
+) -> dict:
+    return normalize_row_obj(
+        normalized_headers,
+        row,
+        store_original=True,
+        date_format_by_column=date_format_by_column,
+        money_columns=money_columns,
+        measurement_columns=measurement_columns,
+    )
 
 
 def _insert_rows_postgres_copy(
     dataset_id: int,
     headers: List[str],
     rows_iter: Iterable[List[str]],
+    date_format_by_column: Optional[dict] = None,
+    money_columns: Optional[set] = None,
+    measurement_columns: Optional[set] = None,
 ) -> int:
     """Fast path for PostgreSQL ingestion using COPY."""
     row_count = 0
@@ -249,7 +255,13 @@ def _insert_rows_postgres_copy(
                 "COPY dataset_rows (dataset_id, row_index, row_data) FROM STDIN"
             ) as copy:
                 for row_index, row in enumerate(rows_iter):
-                    row_obj = _build_row_obj(headers, row)
+                    row_obj = _build_row_obj(
+                        headers,
+                        row,
+                        date_format_by_column,
+                        money_columns,
+                        measurement_columns,
+                    )
                     copy.write_row(
                         (
                             dataset_id,
@@ -271,13 +283,22 @@ def _insert_rows_batched(
     dataset_id: int,
     headers: List[str],
     rows_iter: Iterable[List[str]],
+    date_format_by_column: Optional[dict] = None,
+    money_columns: Optional[set] = None,
+    measurement_columns: Optional[set] = None,
 ) -> int:
     """Fallback ingestion path (works for SQLite and non-Postgres)."""
     row_count = 0
     with SessionLocal() as db:
         batch_rows = []
         for row_index, row in enumerate(rows_iter):
-            row_obj = _build_row_obj(headers, row)
+            row_obj = _build_row_obj(
+                headers,
+                row,
+                date_format_by_column,
+                money_columns,
+                measurement_columns,
+            )
             batch_rows.append(
                 {
                     "dataset_id": dataset_id,
@@ -400,7 +421,7 @@ def ingest_table(
         raise HTTPException(status_code=400, detail="Missing filename.")
     validate_filename(file.filename)
 
-    headers, rows_iter, detected_delimiter = _iter_rows(file, has_header)
+    raw_headers, normalized_headers, rows_iter, detected_delimiter = _iter_rows(file, has_header)
 
     dataset_display_name = normalize_dataset_name_or_raise(
         dataset_name or os.path.splitext(file.filename)[0]
@@ -412,32 +433,53 @@ def ingest_table(
             source_filename=file.filename,
             delimiter=detected_delimiter,
             has_header=has_header,
-            column_count=len(headers),
+            column_count=len(normalized_headers),
             is_index_ready=False,
         )
-        db.add(
-            dataset
-        )  # adds the new dataset to the session, which assigns it an ID after flush() is called
-        db.flush()  # sends it to the database to get the generated ID, but does not commit yet so it can be rolled back if needed
+        db.add(dataset)
+        db.flush()
 
         db.add_all(
             [
-                DatasetColumn(dataset_id=dataset.id, column_index=i, name=col_name)
-                for i, col_name in enumerate(headers)
+                DatasetColumn(
+                    dataset_id=dataset.id,
+                    column_index=i,
+                    original_name=raw_headers[i] or None,
+                    normalized_name=normalized_headers[i],
+                )
+                for i in range(len(normalized_headers))
             ]
-        )  # creates a DatasetColumn object for each header and adds them to the session, associating them with the dataset by dataset_id
-        db.commit()  # commits the dataset to the database
+        )
+        db.commit()
         dataset_id = dataset.id
         dataset_name_value = dataset.name
         dataset_delimiter = dataset.delimiter
         dataset_has_header = dataset.has_header
 
+    rows_list = list(rows_iter)
+    date_format_by_column = infer_date_formats_for_columns(normalized_headers, rows_list)
+    money_columns = infer_money_columns(normalized_headers, rows_list)
+    measurement_columns = infer_measurement_columns(normalized_headers, rows_list)
     row_count = 0
     try:
         if engine.dialect.name == "postgresql":
-            row_count = _insert_rows_postgres_copy(dataset_id, headers, rows_iter)
+            row_count = _insert_rows_postgres_copy(
+                dataset_id,
+                normalized_headers,
+                rows_list,
+                date_format_by_column,
+                money_columns,
+                measurement_columns,
+            )
         else:
-            row_count = _insert_rows_batched(dataset_id, headers, rows_iter)
+            row_count = _insert_rows_batched(
+                dataset_id,
+                normalized_headers,
+                rows_list,
+                date_format_by_column,
+                money_columns,
+                measurement_columns,
+            )
     except Exception as exc:
         with SessionLocal() as db:
             db.execute(text("DELETE FROM datasets WHERE id = :id"), {"id": dataset_id})
@@ -464,7 +506,7 @@ def ingest_table(
         "dataset_id": dataset_id,
         "name": dataset_name_value,
         "rows": row_count,
-        "columns": len(headers),
+        "columns": len(normalized_headers),
         "delimiter": dataset_delimiter,
         "has_header": dataset_has_header,
     }

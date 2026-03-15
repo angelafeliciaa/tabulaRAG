@@ -11,8 +11,11 @@ from sqlalchemy import text
 from app.db import SessionLocal
 from app.embeddings import embed_texts
 from app.qdrant_client import search_vectors
-from app.typed_values import (
+from app.normalization import (
+    flatten_row_data_to_normalized,
+    get_column_currency,
     get_numeric_value,
+    get_normalized_value,
     is_internal_key,
     parse_number as _typed_parse_number,
     strip_internal_fields,
@@ -470,7 +473,10 @@ def _fallback_highlight(
     best_col: Optional[str] = None
     best_score = -1
 
-    for col, val in row_data.items():
+    for col in row_data:
+        if is_internal_key(str(col)):
+            continue
+        val = get_normalized_value(row_data, col)
         if val is None or val == "":
             continue
         col_tokens = set(_tokenize(col))
@@ -483,7 +489,7 @@ def _fallback_highlight(
     if best_col is None:
         return None
 
-    value = row_data.get(best_col)
+    value = get_normalized_value(row_data, best_col)
     return {
         "highlight_id": f"d{dataset_id}_r{row_index}_{best_col}",
         "column": best_col,
@@ -516,7 +522,7 @@ def _build_result_item(
     result: Dict[str, Any] = {
         "row_index": row_index,
         "score": score,
-        "row_data": public_row_data,
+        "row_data": flatten_row_data_to_normalized(public_row_data),
         "highlights": highlights,
         "match_type": match_type,
         "source_url": highlight_ui_url,
@@ -612,7 +618,7 @@ def exact_search(
     for row in rows:
         row_index = row[0]
         row_data = _deserialize_row_data(row[1])
-        if all(row_data.get(col) == val for col, val in filters.items()):
+        if all(get_normalized_value(row_data, col) == val for col, val in filters.items()):
             results.append(
                 _build_result_item(
                     dataset_id=dataset_id,
@@ -746,9 +752,10 @@ def _infer_filters(
     # Value-driven filters: detect known categorical values inside the question.
     value_to_columns: Dict[str, Dict[str, str]] = defaultdict(dict)
     for _, row_data in rows:
-        for col, val in row_data.items():
-            if col in numeric_columns:
+        for col in row_data:
+            if is_internal_key(str(col)) or col in numeric_columns:
                 continue
+            val = get_normalized_value(row_data, col)
             if val is None:
                 continue
             value_norm = _normalize_text(val)
@@ -760,7 +767,7 @@ def _infer_filters(
                 continue
             if len(value_to_columns[value_norm]) >= 3:
                 continue
-            value_to_columns[value_norm][col] = str(val)
+            value_to_columns[value_norm][col] = str(val)  # normalized value for filter
 
     for value_norm, column_map in value_to_columns.items():
         if not _contains_phrase(question_norm, value_norm):
@@ -795,7 +802,7 @@ def _apply_filters(
 
     filtered: List[Tuple[int, Dict[str, Any]]] = []
     for row_index, row_data in rows:
-        if all(_value_matches_filter(row_data.get(col), val) for col, val in filters):
+        if all(_value_matches_filter(get_normalized_value(row_data, col), val) for col, val in filters):
             filtered.append((row_index, row_data))
     return filtered
 
@@ -804,27 +811,25 @@ def _sql_escape_literal(value: str) -> str:
     return value.replace("'", "''")
 
 
+def _sql_row_data_col_expr(column: str) -> str:
+    """SQL expression for normalized value of a column from row_data (supports {original, normalized} and legacy)."""
+    escaped = _sql_escape_literal(column)
+    return f"COALESCE((row_data->'{escaped}')->>'normalized', row_data->>'{escaped}')"
+
+
 def _sql_metric_expr(metric_column: str) -> str:
-    escaped = _sql_escape_literal(metric_column)
+    col_expr = _sql_row_data_col_expr(metric_column)
     return (
-        "NULLIF(regexp_replace(COALESCE(row_data->>'"
-        + escaped
-        + "', ''), '[^0-9.\\-]', '', 'g'), '')::double precision"
+        "NULLIF(regexp_replace(COALESCE(" + col_expr + ", ''), '[^0-9.\\-]', '', 'g'), '')::double precision"
     )
 
 
 def _sql_filter_clauses(dataset_id: int, filters: List[Tuple[str, str]]) -> str:
     clauses = [f"dataset_id = {int(dataset_id)}"]
     for col, value in filters:
-        col_escaped = _sql_escape_literal(col)
+        col_expr = _sql_row_data_col_expr(col)
         val_escaped = _sql_escape_literal(value)
-        clauses.append(
-            "LOWER(COALESCE(row_data->>'"
-            + col_escaped
-            + "', '')) = LOWER('"
-            + val_escaped
-            + "')"
-        )
+        clauses.append(f"LOWER(COALESCE({col_expr}, '')) = LOWER('{val_escaped}')")
     return " AND ".join(clauses)
 
 
@@ -847,7 +852,6 @@ def _sql_equivalent_query(
 
     metric_expr = _sql_metric_expr(metric_column or "")
     if group_column:
-        group_escaped = _sql_escape_literal(group_column)
         if mode == "count":
             metric_sql = "COUNT(*)"
         elif mode == "avg":
@@ -855,10 +859,11 @@ def _sql_equivalent_query(
         else:
             metric_sql = f"SUM({metric_expr})"
         direction = "ASC" if operator == "min" else "DESC"
+        group_expr = _sql_row_data_col_expr(group_column)
         return (
-            "SELECT row_data->>'"
-            + group_escaped
-            + "' AS group_value, "
+            "SELECT "
+            + group_expr
+            + " AS group_value, "
             + metric_sql
             + " AS metric_value "
             + "FROM dataset_rows "
@@ -1308,7 +1313,7 @@ def _infer_aggregate_answer(
             if mode in {"sum", "avg", "rank"} and metric_value is None:
                 continue
 
-            group_raw = row_data.get(group_column)
+            group_raw = get_normalized_value(row_data, group_column)
             group_value = str(group_raw).strip() if group_raw is not None else ""
             if not group_value:
                 group_value = "(blank)"
@@ -1501,7 +1506,7 @@ def _infer_aggregate_answer(
             question=question,
         )
         if answer_column:
-            raw_value = source_row_data.get(answer_column)
+            raw_value = get_normalized_value(source_row_data, answer_column)
             if raw_value is not None and str(raw_value).strip():
                 answer_value = str(raw_value).strip()
 
@@ -1545,6 +1550,10 @@ def _infer_aggregate_answer(
             top_n=1,
         ),
     }
+    if metric_for_mode and source_row_data is not None:
+        currency = get_column_currency(source_row_data, metric_for_mode)
+        if currency is not None:
+            answer_details["metric_currency"] = currency
     if source_result:
         answer_details.update(
             {
@@ -1641,7 +1650,7 @@ def _verify_response(payload: Dict[str, Any]) -> Dict[str, Any]:
     answer_value = details.get("answer_value")
     source_row_data = details.get("source_row_data") or {}
     if answer_column and answer_value is not None and isinstance(source_row_data, dict):
-        source_value = source_row_data.get(answer_column)
+        source_value = get_normalized_value(source_row_data, answer_column)
         is_match = source_value is not None and str(source_value).strip() == str(answer_value).strip()
         checks.append(
             {
@@ -1664,7 +1673,7 @@ def _verify_response(payload: Dict[str, Any]) -> Dict[str, Any]:
         and metric_column
         and metric_value is not None
     ):
-        source_metric = _parse_number(source_row_data.get(metric_column))
+        source_metric = _parse_number(get_normalized_value(source_row_data, metric_column))
         metric_ok = source_metric is not None and abs(float(source_metric) - float(metric_value)) < 1e-9
         checks.append(
             {
@@ -1770,7 +1779,10 @@ def generate_highlights(
     keywords = set(extract_keywords(question))
     highlights = []
 
-    for col, val in row_data.items():
+    for col in row_data:
+        if is_internal_key(str(col)):
+            continue
+        val = get_normalized_value(row_data, col)
         if val is None or val == "":
             continue
         val_str = str(val).lower()
@@ -1838,6 +1850,6 @@ def get_highlight(highlight_id: str) -> Optional[Dict[str, Any]]:
         "dataset_id": dataset_id,
         "row_index": row_index,
         "column": column,
-        "value": public_row_data[column],
+        "value": get_normalized_value(public_row_data, column),
         "row_context": public_row_data,
     }

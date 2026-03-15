@@ -3,16 +3,21 @@ import base64
 import json
 import re
 from typing import Any, Dict, List, Literal, Optional
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.retrieval import get_highlight, hybrid_search, resolve_dataset_context, smart_query
-from app.routes_tables import list_tables,get_cols_for_dataset
+from app.routes_tables import list_tables, get_cols_for_dataset
 import app.db as app_db
 from app.db import SessionLocal
-from app.typed_values import strip_internal_fields
+from app.normalization import (
+    flatten_row_data_to_normalized,
+    flatten_row_data_to_original,
+    get_column_currency,
+    get_column_unit,
+    strip_internal_fields,
+)
 
 router = APIRouter()
 
@@ -42,12 +47,53 @@ def _is_sqlite() -> bool:
 
 
 def _column_json_text_expr(column_name: str) -> str:
+    """SQL expression for the normalized value of a column from row_data (supports {original, normalized} shape and legacy plain values)."""
     escaped = column_name.replace("'", "''")
     if _is_sqlite():
-        # SQLite JSON1 path to support arbitrary column names (including spaces).
         json_key = column_name.replace("\\", "\\\\").replace('"', '\\"')
-        return f"json_extract(row_data, '$.\"{json_key}\"')"
-    return f"(row_data::jsonb ->> '{escaped}')"
+        # Prefer .normalized for new shape; fallback to plain value for legacy
+        return f"COALESCE(json_extract(row_data, '$.\"{json_key}\".normalized'), json_extract(row_data, '$.\"{json_key}\"'))"
+    return f"COALESCE((row_data::jsonb -> '{escaped}') ->> 'normalized', row_data::jsonb ->> '{escaped}')"
+
+
+def _column_null_check_expr(column_name: str) -> str:
+    """SQL expression for IS NULL / IS NOT NULL: must be SQL NULL when normalized is JSON null, not the whole object. For legacy plain values, use the plain value."""
+    escaped = column_name.replace("'", "''")
+    if _is_sqlite():
+        json_key = column_name.replace("\\", "\\\\").replace('"', '\\"')
+        # When cell is an object, use .normalized only (so JSON null => SQL NULL). When legacy plain value, use it.
+        return (
+            f"CASE WHEN json_type(json_extract(row_data, '$.\"{json_key}\"')) = 'object' "
+            f"THEN json_extract(row_data, '$.\"{json_key}\".normalized') "
+            f"ELSE json_extract(row_data, '$.\"{json_key}\"') END"
+        )
+    # When cell is object use only .normalized (so JSON null => SQL NULL); else legacy scalar
+    return (
+        f"CASE WHEN jsonb_typeof(row_data::jsonb -> '{escaped}') = 'object' "
+        f"THEN (row_data::jsonb -> '{escaped}') ->> 'normalized' "
+        f"ELSE row_data::jsonb ->> '{escaped}' END"
+    )
+
+
+def _group_by_date_part_expr(
+    col_expr: str, part: Literal["month", "quarter", "year"]
+) -> str:
+    """SQL expression that groups an ISO date column by month (YYYY-MM), quarter (YYYY-QN), or year (YYYY)."""
+    if _is_sqlite():
+        if part == "month":
+            return f"strftime('%Y-%m', {col_expr})"
+        if part == "year":
+            return f"strftime('%Y', {col_expr})"
+        # quarter: YYYY-Q1..Q4
+        return (
+            f"strftime('%Y', {col_expr}) || '-Q' || ((cast(strftime('%m', {col_expr}) as integer) + 2) / 3)"
+        )
+    # PostgreSQL
+    if part == "month":
+        return f"SUBSTRING({col_expr} FROM 1 FOR 7)"
+    if part == "year":
+        return f"SUBSTRING({col_expr} FROM 1 FOR 4)"
+    return f"to_char(({col_expr})::date, 'YYYY-\"Q\"Q')"
 
 
 def _numeric_sql_expr(col: str) -> str:
@@ -112,7 +158,8 @@ def _build_where_clauses(
         current_expr = ""
 
         if f.operator in ("IS NULL", "IS NOT NULL"):
-            current_expr = f"{col} {f.operator}"
+            null_col = _column_null_check_expr(f.column)
+            current_expr = f"({null_col} {f.operator})"
         elif f.operator == "IN":
             if not f.value:
                 raise HTTPException(
@@ -194,7 +241,9 @@ def _build_where_clauses(
 
       
 class FilterCondition(BaseModel):
-    column: str
+    column: str = Field(
+        description="Column name. Use normalized_name from GET /tables/{dataset_id}/columns (not original_name)."
+    )
     operator: FilterOperator
     value: Optional[str] = None  # None for IS NULL / IS NOT NULL
     logical_operator: Literal["AND", "OR"] = "AND"
@@ -286,12 +335,20 @@ class AggregateRequest(BaseModel):
     dataset_id: int = Field(
         description="ID of the dataset to aggregate. Call GET /tables first to discover valid IDs."
     )
-    filters: Optional[List[FilterCondition]] = None 
+    filters: Optional[List[FilterCondition]] = None
     operation: Literal["count", "sum", "avg", "min", "max"]
     metric_column: Optional[str] = Field(
-        default=None, description="Required for sum/avg/min/max"
+        default=None,
+        description="Column to aggregate (sum/avg/min/max). Use normalized_name from GET /tables/{dataset_id}/columns.",
     )
-    group_by: Optional[str] = None
+    group_by: Optional[str] = Field(
+        default=None,
+        description="Column to group by. Use normalized_name from GET /tables/{dataset_id}/columns.",
+    )
+    group_by_date_part: Optional[Literal["month", "quarter", "year"]] = Field(
+        default=None,
+        description="When group_by is a date column (ISO YYYY-MM-DD), group by this part instead of full date: month (YYYY-MM), quarter (YYYY-QN), or year (YYYY).",
+    )
     limit: int = 50
 
 
@@ -299,6 +356,15 @@ class AggregateResponse(BaseModel):
     dataset_id: int
     metric_column: Optional[str]
     group_by_column: Optional[str]
+    group_by_date_part: Optional[str] = None
+    metric_currency: Optional[str] = Field(
+        default=None,
+        description="Currency code for the metric column when it is money (e.g. USD, EUR). Use when phrasing the answer.",
+    )
+    metric_unit: Optional[str] = Field(
+        default=None,
+        description="Standard unit for the metric column when it is a measurement (e.g. kg, m). Use when displaying aggregate values.",
+    )
     rowsResult: List[Dict[str, Any]] = Field(
         description="Result of the aggregate query. In your response, mention both the group_value and aggregate_value."
     )
@@ -313,7 +379,10 @@ class FilterRequest(BaseModel):
     dataset_id: int = Field(
         description="ID of the dataset to filter. Call GET /tables first to discover valid IDs."
     )
-    filters: Optional[List[FilterCondition]] = None
+    filters: Optional[List[FilterCondition]] = Field(
+        default=None,
+        description="Filter conditions. Use normalized_name for each column (from GET /tables/{dataset_id}/columns).",
+    )
     limit: int = 50
     offset: int = 0
 
@@ -367,12 +436,14 @@ def build_virtual_table_url(body: AggregateRequest, rows: List[Dict[str, Any]]) 
         "operation": body.operation,
         "metric_column": body.metric_column,
         "group_by": body.group_by,
+        "group_by_date_part": body.group_by_date_part,
         "filters": [f.dict() for f in body.filters] if body.filters else None,
         "highlight_index": highlight_index,
         "limit": 500,
     }
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-    return f"{PUBLIC_UI_BASE_URL}/tables/virtual?q={encoded}"
+    # Put payload in both query and hash so link still works if query string is stripped (e.g. by some clients after normalization)
+    return f"{PUBLIC_UI_BASE_URL}/tables/virtual?q={encoded}#q={encoded}"
 
 
 def build_filter_virtual_table_url(body: FilterRequest) -> str:
@@ -384,7 +455,7 @@ def build_filter_virtual_table_url(body: FilterRequest) -> str:
         "offset": 0,
     }
     encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
-    return f"{PUBLIC_UI_BASE_URL}/tables/virtual?q={encoded}"
+    return f"{PUBLIC_UI_BASE_URL}/tables/virtual?q={encoded}#q={encoded}"
 
 def _enforce_list_tables_first() -> bool:
     return os.getenv("QUERY_ENFORCE_LIST_TABLES_FIRST", "false").strip().lower() in {
@@ -488,7 +559,7 @@ def aggregate_dataset(body: AggregateRequest):
         raise HTTPException(status_code=404, detail="Dataset not found.")
 
     cols_payload = get_cols_for_dataset(body.dataset_id)
-    valid_columns = {col["name"] for col in cols_payload["columns"]}
+    valid_columns = {col["normalized_name"] for col in cols_payload["columns"]}
     if not valid_columns:
         raise HTTPException(status_code=400, detail="Dataset has no columns.")
 
@@ -515,7 +586,11 @@ def aggregate_dataset(body: AggregateRequest):
     group_by_sql = ""
     order_by_sql = ""
     if body.group_by:
-        group_expr = col_expr(body.group_by)
+        base_col_expr = col_expr(body.group_by)
+        if body.group_by_date_part:
+            group_expr = _group_by_date_part_expr(base_col_expr, body.group_by_date_part)
+        else:
+            group_expr = base_col_expr
         select_parts.append(f"{group_expr} AS group_value")
         group_by_sql = f" GROUP BY {group_expr}"
         order_by_sql = (
@@ -543,8 +618,23 @@ def aggregate_dataset(body: AggregateRequest):
         LIMIT :limit
     """
 
+    metric_currency: Optional[str] = None
+    metric_unit: Optional[str] = None
     with SessionLocal() as db:
         rows_raw = db.execute(text(sql), params).mappings().all()
+
+        if body.metric_column:
+            sample = db.execute(
+                text("SELECT row_data FROM dataset_rows WHERE dataset_id = :dataset_id LIMIT 1"),
+                {"dataset_id": body.dataset_id},
+            ).fetchone()
+            if sample and sample[0]:
+                row_data = sample[0]
+                if isinstance(row_data, str):
+                    row_data = json.loads(row_data)
+                if isinstance(row_data, dict):
+                    metric_currency = get_column_currency(row_data, body.metric_column)
+                    metric_unit = get_column_unit(row_data, body.metric_column)
 
     rows: List[Dict[str, Any]] = []
     for r in rows_raw:
@@ -555,11 +645,14 @@ def aggregate_dataset(body: AggregateRequest):
         rows.append(item)
 
     url = build_virtual_table_url(body, rows) if rows else None
-    
+
     return AggregateResponse(
         dataset_id=body.dataset_id,
         metric_column=body.metric_column,
         group_by_column=body.group_by,
+        group_by_date_part=body.group_by_date_part,
+        metric_currency=metric_currency,
+        metric_unit=metric_unit,
         rowsResult=rows,
         sql_query=_render_sql(sql, params),
         url=url,
@@ -582,8 +675,7 @@ def filter_dataset(body: FilterRequest):
         raise HTTPException(status_code=404, detail="Dataset not found.")
 
     cols_payload = get_cols_for_dataset(body.dataset_id)
-    ordered_columns = [str(col["name"]) for col in cols_payload["columns"] if col.get("name")]
-    valid_columns = set(ordered_columns)
+    valid_columns = {col["normalized_name"] for col in cols_payload["columns"]}
     if not valid_columns:
         raise HTTPException(status_code=400, detail="Dataset has no columns.")
 
@@ -635,14 +727,14 @@ def filter_dataset(body: FilterRequest):
         item = dict(r)
         row_data = item.get("row_data")
         if isinstance(row_data, dict):
-            item["row_data"] = strip_internal_fields(row_data)
+            item["row_data"] = flatten_row_data_to_original(row_data)
         elif isinstance(row_data, str):
             try:
                 parsed = json.loads(row_data)
                 if isinstance(parsed, str):
                     parsed = json.loads(parsed)
                 item["row_data"] = (
-                    strip_internal_fields(parsed) if isinstance(parsed, dict) else {}
+                    flatten_row_data_to_original(parsed) if isinstance(parsed, dict) else {}
                 )
             except Exception:
                 item["row_data"] = {}
@@ -676,7 +768,7 @@ def filter_row_indices(body: FilterRowIndicesRequest):
         raise HTTPException(status_code=404, detail="Dataset not found.")
 
     cols_payload = get_cols_for_dataset(body.dataset_id)
-    valid_columns = {str(col["name"]) for col in cols_payload["columns"] if col.get("name")}
+    valid_columns = {col["normalized_name"] for col in cols_payload["columns"]}
     if not valid_columns:
         raise HTTPException(status_code=400, detail="Dataset has no columns.")
 
