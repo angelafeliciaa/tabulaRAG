@@ -21,7 +21,7 @@ from app.models import Base
 def test_engine():
     engine = create_engine(
         #use sqlite:///.test_debug.db" if you want to see the contents of the DB after tests run. Use DB Browswer for SQLite and open test_debug.db
-        # "sqlite:///./test_debug.db", 
+        # "sqlite:///./test_debug.db",
         "sqlite://",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,  # forces all connections to share the same in-memory DB
@@ -62,4 +62,5 @@ def clean_tables(test_engine):
         conn.execute(text("DELETE FROM dataset_rows"))
         conn.execute(text("DELETE FROM dataset_columns"))
         conn.execute(text("DELETE FROM datasets"))
+        conn.execute(text("DELETE FROM users"))
         conn.commit()

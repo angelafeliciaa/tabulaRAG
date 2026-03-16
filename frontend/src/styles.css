@@ -2987,6 +2987,50 @@ input:focus-visible,
   flex-shrink: 0;
 }
 
+/* ── Google login button ───────────────────────────────────────────────────── */
+
+.google-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: #fff;
+  color: #3c4043;
+  border: 1px solid #dadce0;
+  width: 100%;
+}
+
+.google-btn:hover:not(:disabled) {
+  background: #f7f8f8;
+  opacity: 1;
+}
+
+.google-icon {
+  flex-shrink: 0;
+}
+
+.login-btn + .login-btn {
+  margin-top: 0.5rem;
+}
+
+/* ── Logout button ─────────────────────────────────────────────────────────── */
+
+.logout-btn {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.logout-btn:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
 /* ── User menu ───────────────────────────────────────────────────────────────── */
 
 .user-menu {

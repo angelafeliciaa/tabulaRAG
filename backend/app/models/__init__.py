@@ -16,10 +16,30 @@ from sqlalchemy.sql import func
 from app.db import Base
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    provider = Column(String(32), nullable=False)  # "github" or "google"
+    provider_id = Column(String(255), nullable=False)
+    email = Column(String(320), nullable=True)
+    name = Column(String(255), nullable=False)
+    avatar_url = Column(String(1024), nullable=True, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    datasets = relationship("Dataset", back_populates="owner")
+
+    __table_args__ = (
+        UniqueConstraint("provider", "provider_id", name="uq_users_provider_id"),
+        Index("ix_users_provider_provider_id", "provider", "provider_id"),
+    )
+
+
 class Dataset(Base):
     __tablename__ = "datasets"
 
     id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
     name = Column(String(255), nullable=False)
     source_filename = Column(String(512), nullable=True)
     delimiter = Column(String(8), nullable=False, default=",")
@@ -34,6 +54,7 @@ class Dataset(Base):
     )
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
+    owner = relationship("User", back_populates="datasets")
     columns = relationship("DatasetColumn", back_populates="dataset", cascade="all, delete-orphan")
     rows = relationship("DatasetRow", back_populates="dataset", cascade="all, delete-orphan")
 
@@ -72,4 +93,4 @@ class DatasetRow(Base):
     )
 
 
-__all__ = ["Base", "Dataset", "DatasetColumn", "DatasetRow"]
+__all__ = ["Base", "User", "Dataset", "DatasetColumn", "DatasetRow"]

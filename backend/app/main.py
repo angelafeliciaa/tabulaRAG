@@ -37,7 +37,16 @@ from app.normalization import (
     normalize_row_obj,
 )
 from app.name_guard import normalize_dataset_name_or_raise
-from app.auth import require_auth, exchange_github_code, create_jwt, GITHUB_CLIENT_ID
+from app.auth import (
+    require_auth,
+    get_user_id_from_auth,
+    exchange_github_code,
+    exchange_google_code,
+    create_jwt,
+    upsert_user,
+    GITHUB_CLIENT_ID,
+    GOOGLE_CLIENT_ID,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -383,7 +392,7 @@ def _resume_incomplete_index_jobs() -> None:
 
 
 @app.post("/auth/verify", include_in_schema=False)
-def auth_verify(credentials: None = Depends(require_auth)) -> dict:
+def auth_verify(auth: dict = Depends(require_auth)) -> dict:
     return {"valid": True}
 
 
@@ -400,13 +409,56 @@ async def auth_github_callback(body: dict):
     if not code:
         raise HTTPException(status_code=400, detail="Missing code parameter")
     github_user = await exchange_github_code(code)
-    token = create_jwt(github_user)
+    user = upsert_user(
+        provider="github",
+        provider_id=str(github_user["id"]),
+        name=github_user.get("name") or github_user["login"],
+        email=github_user.get("email"),
+        avatar_url=github_user.get("avatar_url", ""),
+    )
+    token = create_jwt(user)
     return {
         "token": token,
         "user": {
             "login": github_user["login"],
-            "name": github_user.get("name") or github_user["login"],
-            "avatar_url": github_user.get("avatar_url", ""),
+            "name": user.name,
+            "avatar_url": user.avatar_url,
+            "provider": "github",
+        },
+    }
+
+
+@app.get("/auth/google", include_in_schema=False)
+def auth_google_redirect():
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=500, detail="Google OAuth not configured")
+    return {"client_id": GOOGLE_CLIENT_ID}
+
+
+@app.post("/auth/google/callback", include_in_schema=False)
+async def auth_google_callback(body: dict):
+    code = body.get("code")
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing code parameter")
+    # Compute redirect_uri server-side from trusted config to prevent open redirect
+    ui_base = os.getenv("PUBLIC_UI_BASE_URL", "http://localhost:5173")
+    redirect_uri = f"{ui_base}/auth/callback?provider=google"
+    google_user = await exchange_google_code(code, redirect_uri)
+    user = upsert_user(
+        provider="google",
+        provider_id=str(google_user["id"]),
+        name=google_user.get("name") or google_user.get("email", "User"),
+        email=google_user.get("email"),
+        avatar_url=google_user.get("picture", ""),
+    )
+    token = create_jwt(user)
+    return {
+        "token": token,
+        "user": {
+            "login": google_user.get("email", ""),
+            "name": user.name,
+            "avatar_url": user.avatar_url,
+            "provider": "google",
         },
     }
 
@@ -416,6 +468,7 @@ def ingest_table(
     file: UploadFile = File(...),
     dataset_name: str | None = Form(None),
     has_header: bool = Form(True),
+    auth: dict = Depends(require_auth),
 ):
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename.")
@@ -427,8 +480,10 @@ def ingest_table(
         dataset_name or os.path.splitext(file.filename)[0]
     )
 
+    user_id = get_user_id_from_auth(auth)
     with SessionLocal() as db:
         dataset = Dataset(
+            user_id=user_id,
             name=dataset_display_name,
             source_filename=file.filename,
             delimiter=detected_delimiter,

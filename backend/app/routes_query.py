@@ -3,14 +3,17 @@ import base64
 import json
 import re
 from typing import Any, Dict, List, Literal, Optional
-from fastapi import APIRouter, HTTPException
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from app.auth import require_auth, get_user_id_from_auth
 from app.retrieval import get_highlight, hybrid_search, resolve_dataset_context, smart_query
-from app.routes_tables import list_tables, get_cols_for_dataset
+from app.routes_tables import list_tables_internal, get_columns_internal, _check_dataset_access
 import app.db as app_db
 from app.db import SessionLocal
+from app.models import Dataset
 from app.normalization import (
     flatten_row_data_to_normalized,
     flatten_row_data_to_original,
@@ -466,8 +469,8 @@ def _enforce_list_tables_first() -> bool:
     }
 
 
-def _list_tables_compact() -> List[Dict[str, Any]]:
-    tables = list_tables()
+def _list_tables_compact(user_id: int | None = None) -> List[Dict[str, Any]]:
+    tables = list_tables_internal(user_id=user_id)
     compact: List[Dict[str, Any]] = []
     for table in tables:
         compact.append(
@@ -482,13 +485,13 @@ def _list_tables_compact() -> List[Dict[str, Any]]:
     return compact
 
 
-def _strict_lookup_error(status_code: int, message: str) -> HTTPException:
+def _strict_lookup_error(status_code: int, message: str, user_id: int | None = None) -> HTTPException:
     return HTTPException(
         status_code=status_code,
         detail={
             "message": message,
             "guidance": "Call GET /tables first, then call POST /query with the selected dataset_id.",
-            "available_tables": _list_tables_compact(),
+            "available_tables": _list_tables_compact(user_id=user_id),
         },
     )
 
@@ -501,20 +504,23 @@ def _strict_lookup_error(status_code: int, message: str) -> HTTPException:
     summary="Answer natural-language semantic table queries",
     description="Use this when you need to answer a question with a semantic search.",
 )
-def query_dataset(body: QueryRequest):
+def query_dataset(body: QueryRequest, auth: dict = Depends(require_auth)):
+    user_id = get_user_id_from_auth(auth)
     if _enforce_list_tables_first() and body.dataset_id is None:
         raise _strict_lookup_error(
             status_code=409,
             message="dataset_id is required when QUERY_ENFORCE_LIST_TABLES_FIRST=true.",
+            user_id=user_id,
         )
 
     if _enforce_list_tables_first():
-        tables = _list_tables_compact()
+        tables = _list_tables_compact(user_id=user_id)
         by_id = {int(table["dataset_id"]): table for table in tables}
         if body.dataset_id is None or int(body.dataset_id) not in by_id:
             raise _strict_lookup_error(
                 status_code=404,
                 message=f"Dataset ID {body.dataset_id} was not found.",
+                user_id=user_id,
             )
         resolved_dataset_id = int(body.dataset_id)
         resolved_dataset = dict(by_id[resolved_dataset_id])
@@ -528,6 +534,11 @@ def query_dataset(body: QueryRequest):
             )
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
+
+    # Verify the authenticated user owns the resolved dataset
+    if user_id is not None:
+        with SessionLocal() as db:
+            _check_dataset_access(db, resolved_dataset_id, user_id)
 
     payload = smart_query(
         dataset_id=resolved_dataset_id,
@@ -548,17 +559,12 @@ def query_dataset(body: QueryRequest):
     summary="Answer natural-language table aggregate queries",
     description="Use this for aggregate queries: max, min, sum, average, count. Call GET /tables/columns first to discover valid column names. Always include URL in response",
 )
-def aggregate_dataset(body: AggregateRequest):
-    # Verify dataset exists
+def aggregate_dataset(body: AggregateRequest, auth: dict = Depends(require_auth)):
+    user_id = get_user_id_from_auth(auth)
     with SessionLocal() as db:
-        row = db.execute(
-            text("SELECT id FROM datasets WHERE id = :id"),
-            {"id": body.dataset_id},
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Dataset not found.")
+        _check_dataset_access(db, body.dataset_id, user_id)
 
-    cols_payload = get_cols_for_dataset(body.dataset_id)
+    cols_payload = get_columns_internal(body.dataset_id)
     valid_columns = {col["normalized_name"] for col in cols_payload["columns"]}
     if not valid_columns:
         raise HTTPException(status_code=400, detail="Dataset has no columns.")
@@ -665,17 +671,14 @@ def aggregate_dataset(body: AggregateRequest):
     summary="Filter rows from a dataset",
     description="Apply structured filters to a dataset and return matching rows.",
 )
-def filter_dataset(body: FilterRequest):
+def filter_dataset(body: FilterRequest, auth: dict = Depends(require_auth)):
+    user_id = get_user_id_from_auth(auth)
     with SessionLocal() as db:
-        row = db.execute(
-            text("SELECT id FROM datasets WHERE id = :id"),
-            {"id": body.dataset_id},
-        ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Dataset not found.")
+        _check_dataset_access(db, body.dataset_id, user_id)
 
-    cols_payload = get_cols_for_dataset(body.dataset_id)
-    valid_columns = {col["normalized_name"] for col in cols_payload["columns"]}
+    cols_payload = get_columns_internal(body.dataset_id)
+    ordered_columns = [str(col["normalized_name"]) for col in cols_payload["columns"] if col.get("normalized_name")]
+    valid_columns = set(ordered_columns)
     if not valid_columns:
         raise HTTPException(status_code=400, detail="Dataset has no columns.")
 
@@ -767,7 +770,7 @@ def filter_row_indices(body: FilterRowIndicesRequest):
     if row is None:
         raise HTTPException(status_code=404, detail="Dataset not found.")
 
-    cols_payload = get_cols_for_dataset(body.dataset_id)
+    cols_payload = get_columns_internal(body.dataset_id)
     valid_columns = {col["normalized_name"] for col in cols_payload["columns"]}
     if not valid_columns:
         raise HTTPException(status_code=400, detail="Dataset has no columns.")
@@ -820,8 +823,13 @@ def filter_row_indices(body: FilterRowIndicesRequest):
     response_model=HighlightResponse,
     include_in_schema=False,
 )
-def highlight_endpoint(highlight_id: str):
+def highlight_endpoint(highlight_id: str, auth: dict = Depends(require_auth)):
+    user_id = get_user_id_from_auth(auth)
     result = get_highlight(highlight_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Highlight not found.")
+    # Verify the user owns this dataset
+    if user_id is not None:
+        with SessionLocal() as db:
+            _check_dataset_access(db, result["dataset_id"], user_id)
     return result

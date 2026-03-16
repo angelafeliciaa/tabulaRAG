@@ -200,7 +200,7 @@ def test_rejects_non_utf8_payload_with_csv_extension(client):
     assert response.status_code == 400
     assert "UTF-8 encoded text" in response.json()["detail"]
 
-def test_ingest_does_not_require_auth_temporarily():
+def test_ingest_requires_auth():
     from fastapi.testclient import TestClient
     import app.main as app_main
 
@@ -209,4 +209,4 @@ def test_ingest_does_not_require_auth_temporarily():
             "/ingest",
             files={"file": ("data.csv", io.BytesIO(b"a,b\n1,2\n"), "text/csv")},
         )
-    assert response.status_code == 200
+    assert response.status_code == 401

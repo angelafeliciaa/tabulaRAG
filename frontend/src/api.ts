@@ -7,6 +7,7 @@ export interface AuthUser {
   login: string;
   name: string;
   avatar_url: string;
+  provider?: "github" | "google";
 }
 
 export function getToken(): string | null {
@@ -38,6 +39,11 @@ export function logout(): void {
   localStorage.removeItem(USER_KEY);
 }
 
+function storeAuth(data: { token: string; user: AuthUser }): void {
+  localStorage.setItem(TOKEN_KEY, data.token);
+  localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+}
+
 async function authFetch(
   input: string | URL,
   init?: RequestInit,
@@ -52,6 +58,27 @@ async function authFetch(
   }
   return res;
 }
+
+// ── OAuth CSRF state ─────────────────────────────────────────────
+
+const OAUTH_STATE_KEY = "tabularag_oauth_state";
+
+export function generateOAuthState(): string {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  const state = Array.from(array, (b) => b.toString(16).padStart(2, "0")).join("");
+  sessionStorage.setItem(OAUTH_STATE_KEY, state);
+  return state;
+}
+
+export function verifyOAuthState(state: string | null): boolean {
+  const stored = sessionStorage.getItem(OAUTH_STATE_KEY);
+  sessionStorage.removeItem(OAUTH_STATE_KEY);
+  if (!stored || !state) return false;
+  return stored === state;
+}
+
+// ── GitHub OAuth ──────────────────────────────────────────────────
 
 export async function getGithubClientId(): Promise<string> {
   const res = await fetch(`${API_BASE}/auth/github`);
@@ -73,10 +100,55 @@ export async function exchangeGithubCode(
     throw new Error(err || "GitHub authentication failed");
   }
   const data = (await res.json()) as { token: string; user: AuthUser };
-  localStorage.setItem(TOKEN_KEY, data.token);
-  localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+  storeAuth(data);
   return data;
 }
+
+// ── Google OAuth ──────────────────────────────────────────────────
+
+export async function getGoogleClientId(): Promise<string> {
+  const res = await fetch(`${API_BASE}/auth/google`);
+  if (!res.ok) throw new Error("Google OAuth not configured");
+  const data = (await res.json()) as { client_id: string };
+  return data.client_id;
+}
+
+export async function exchangeGoogleCode(
+  code: string,
+): Promise<{ token: string; user: AuthUser }> {
+  const res = await fetch(`${API_BASE}/auth/google/callback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err || "Google authentication failed");
+  }
+  const data = (await res.json()) as { token: string; user: AuthUser };
+  storeAuth(data);
+  return data;
+}
+
+// ── Providers config ──────────────────────────────────────────────
+
+export interface OAuthProviders {
+  github: boolean;
+  google: boolean;
+}
+
+export async function getAvailableProviders(): Promise<OAuthProviders> {
+  const [github, google] = await Promise.allSettled([
+    getGithubClientId(),
+    getGoogleClientId(),
+  ]);
+  return {
+    github: github.status === "fulfilled",
+    google: google.status === "fulfilled",
+  };
+}
+
+// ── Data types ────────────────────────────────────────────────────
 
 export type ServerStatus = "Online" | "Offline" | "Unknown";
 export type IndexJobState = "queued" | "indexing" | "ready" | "error";

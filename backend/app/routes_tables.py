@@ -1,10 +1,11 @@
 import json
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import delete, select, text
 
 from app.db import SessionLocal, engine
+from app.auth import require_auth, get_user_id_from_auth
 from app.index_jobs import clear_index_job, get_index_jobs
 from app.models import Dataset, DatasetColumn, DatasetRow
 from app.qdrant_client import delete_collection, get_collection_point_count
@@ -68,11 +69,14 @@ def _delete_collection_safe(dataset_id: int) -> None:
     summary="List all datasets",
     description="Returns indexed datasets with their IDs, names, and metadata. Pending uploads are omitted unless include_pending=true.",
 )
-def list_tables(include_pending: bool = False):
+def list_tables(include_pending: bool = False, auth: dict = Depends(require_auth)):
+    user_id = get_user_id_from_auth(auth)
     with SessionLocal() as db:
         query = select(Dataset).order_by(Dataset.id.desc())
         if not include_pending:
             query = query.where(Dataset.is_index_ready.is_(True))
+        if user_id is not None:
+            query = query.where(Dataset.user_id == user_id)
         datasets = db.execute(query).scalars().all()
         return [
             {
@@ -87,18 +91,74 @@ def list_tables(include_pending: bool = False):
         ]
 
 
+def list_tables_internal(user_id: int | None = None, include_pending: bool = False) -> list:
+    """Internal helper to list datasets without auth dependency."""
+    with SessionLocal() as db:
+        query = select(Dataset).order_by(Dataset.id.desc())
+        if not include_pending:
+            query = query.where(Dataset.is_index_ready.is_(True))
+        if user_id is not None:
+            query = query.where(Dataset.user_id == user_id)
+        datasets = db.execute(query).scalars().all()
+        return [
+            {
+                "dataset_id": d.id,
+                "name": d.name,
+                "source_filename": d.source_filename,
+                "row_count": d.row_count,
+                "column_count": d.column_count,
+                "created_at": d.created_at.isoformat(),
+            }
+            for d in datasets
+        ]
+
+
+def get_columns_internal(dataset_id: int) -> dict:
+    """Internal helper to get columns without auth (caller must verify access first)."""
+    with SessionLocal() as db:
+        columns = (
+            db.execute(
+                select(DatasetColumn)
+                .where(DatasetColumn.dataset_id == dataset_id)
+                .order_by(DatasetColumn.column_index)
+            )
+            .scalars()
+            .all()
+        )
+    return {
+        "dataset_id": dataset_id,
+        "columns": [
+            {
+                "column_index": c.column_index,
+                "original_name": c.original_name,
+                "normalized_name": c.normalized_name,
+            }
+            for c in columns
+        ],
+    }
+
+
+def _check_dataset_access(db, dataset_id: int, user_id: int | None) -> Dataset:
+    """Load dataset and verify ownership. Returns the dataset or raises 404."""
+    dataset = db.execute(
+        select(Dataset).where(Dataset.id == dataset_id)
+    ).scalar_one_or_none()
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="Dataset not found.")
+    if user_id is not None and dataset.user_id != user_id:
+        raise HTTPException(status_code=404, detail="Dataset not found.")
+    return dataset
+
+
 @router.get(
     "/tables/{dataset_id}/columns",
     summary="List all columns for a dataset",
     description="Returns column names and indexes for a dataset. Always call this to understand the data structure and actual column names before querying.",
 )
-def get_cols_for_dataset(dataset_id: int):
+def get_cols_for_dataset(dataset_id: int, auth: dict = Depends(require_auth)):
+    user_id = get_user_id_from_auth(auth)
     with SessionLocal() as db:
-        dataset = db.execute(
-            select(Dataset).where(Dataset.id == dataset_id)
-        ).scalar_one_or_none()
-        if dataset is None:
-            raise HTTPException(status_code=404, detail="Dataset not found.")
+        _check_dataset_access(db, dataset_id, user_id)
 
         columns = (
             db.execute(
@@ -145,11 +205,11 @@ def get_table_slice(
         default="asc",
         description="Sort direction: 'asc' or 'desc'. Used only when sort_column is set.",
     ),
+    auth: dict = Depends(require_auth),
 ):
+    user_id = get_user_id_from_auth(auth)
     with SessionLocal() as db:
-        dataset = db.get(Dataset, dataset_id)
-        if not dataset:
-            raise HTTPException(status_code=404, detail="Table not found")
+        dataset = _check_dataset_access(db, dataset_id, user_id)
 
         if sort_column and sort_direction:
             # Validate sort_column exists
@@ -223,11 +283,14 @@ def get_table_slice(
 
 
 @router.get("/tables/index-status", include_in_schema=False)
-def list_index_status(dataset_id: Optional[List[int]] = Query(default=None)):
+def list_index_status(dataset_id: Optional[List[int]] = Query(default=None), auth: dict = Depends(require_auth)):
+    user_id = get_user_id_from_auth(auth)
     with SessionLocal() as db:
         query = select(Dataset.id, Dataset.row_count)
         if dataset_id:
             query = query.where(Dataset.id.in_(dataset_id))
+        if user_id is not None:
+            query = query.where(Dataset.user_id == user_id)
         dataset_rows = db.execute(query.order_by(Dataset.id.desc())).all()
 
     dataset_ids = [int(row[0]) for row in dataset_rows]
@@ -291,11 +354,10 @@ def list_index_status(dataset_id: Optional[List[int]] = Query(default=None)):
 
 
 @router.delete("/tables/{dataset_id}", include_in_schema=False)
-def delete_table(dataset_id: int, background_tasks: BackgroundTasks):
+def delete_table(dataset_id: int, background_tasks: BackgroundTasks, auth: dict = Depends(require_auth)):
+    user_id = get_user_id_from_auth(auth)
     with SessionLocal() as db:
-        exists = db.execute(select(Dataset.id).where(Dataset.id == dataset_id)).first()
-        if not exists:
-            raise HTTPException(status_code=404, detail="Table not found")
+        _check_dataset_access(db, dataset_id, user_id)
         # Use direct SQL deletes to avoid expensive ORM cascade object loading.
         db.execute(delete(DatasetRow).where(DatasetRow.dataset_id == dataset_id))
         db.execute(delete(DatasetColumn).where(DatasetColumn.dataset_id == dataset_id))
@@ -307,11 +369,10 @@ def delete_table(dataset_id: int, background_tasks: BackgroundTasks):
 
 
 @router.patch("/tables/{dataset_id}", include_in_schema=False)
-def rename_table(dataset_id: int, body: RenameRequest):
+def rename_table(dataset_id: int, body: RenameRequest, auth: dict = Depends(require_auth)):
+    user_id = get_user_id_from_auth(auth)
     with SessionLocal() as db:
-        dataset = db.get(Dataset, dataset_id)
-        if not dataset:
-            raise HTTPException(status_code=404, detail="Table not found")
+        dataset = _check_dataset_access(db, dataset_id, user_id)
         dataset.name = normalize_dataset_name_or_raise(body.name)
         db.commit()
         return {"name": dataset.name}
