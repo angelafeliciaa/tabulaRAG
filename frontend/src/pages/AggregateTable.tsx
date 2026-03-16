@@ -307,11 +307,12 @@ export default function VirtualTableView() {
     [filtered.rows],
   );
 
-  if (err) {
+  const displayError = parsedQuery.error || err;
+  if (displayError) {
     return (
       <div className="page-stack">
         <p className="error" role="alert">
-          {err}
+          {displayError}
         </p>
       </div>
     );
@@ -319,11 +320,6 @@ export default function VirtualTableView() {
 
   return (
     <div className="page-stack virtual-results-page">
-      {parsedQuery.error && !err && (
-        <p className="error" role="alert">
-          {parsedQuery.error}
-        </p>
-      )}
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="row virtual-results-header-row">
           <div className="virtual-results-header-main">
