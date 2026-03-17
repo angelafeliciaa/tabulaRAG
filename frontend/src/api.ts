@@ -348,6 +348,8 @@ export async function listIndexStatus(
 export type SliceOptions = {
   /** If true (default), flatten each row to normalized values only. If false, return raw { original, normalized } per cell for toggle support. */
   flatten?: boolean;
+  /** When set, only rows where any cell contains this string (case-insensitive) are returned. Pagination applies to the filtered set. */
+  search?: string;
 };
 
 export type SliceSort = {
@@ -369,6 +371,10 @@ export async function getSlice(
   if (options?.sort?.sortColumn) {
     url.searchParams.set("sort_column", options.sort.sortColumn);
     url.searchParams.set("sort_direction", options.sort.sortDirection);
+  }
+  const searchTrimmed = options?.search?.trim();
+  if (searchTrimmed) {
+    url.searchParams.set("search", searchTrimmed);
   }
 
   const res = await authFetch(url.toString(), { headers: authHeaders() });

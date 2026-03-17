@@ -21,6 +21,7 @@ import {
   renameTable,
   uploadTable,
   type TableIndexStatus,
+  type TableRow,
   type TableSlice,
   type TableSummary,
   type UploadProgress,
@@ -32,10 +33,12 @@ import uploadLogo from "../images/upload.png";
 
 const PENDING_UPLOAD_SESSION_KEY = "tabularag_pending_upload";
 const PINNED_TABLES_STORAGE_KEY = "tabularag_pinned_table_ids";
+const SELECTED_PREVIEW_TABLE_KEY = "tabularag_selected_preview_table_id";
 const SUCCESS_TOAST_MS = 2800;
 const INDEX_PROGRESS_DRIFT_STEP = 0.35;
 const INDEX_PROGRESS_DRIFT_CAP = 99.4;
 const SAFE_TABLE_NAME_MAX_LENGTH = 64;
+const PREVIEW_ROWS_PER_PAGE = 100;
 
 type ToastState = { id: number; kind: "success"; message: string };
 type UploadQueuePhase = "idle" | UploadProgress["phase"] | "success" | "error";
@@ -91,6 +94,30 @@ const TABLE_SORT_OPTIONS: Array<{ value: TableSortMode; label: string }> = [
   { value: "rows", label: "Most rows" },
   { value: "alphabet", label: "Alphabetical" },
 ];
+
+/** Resolve cell value to original when it is { original, normalized }; otherwise return as-is. */
+function resolveCellOriginal(value: unknown): unknown {
+  if (
+    value != null
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && "original" in value
+    && "normalized" in value
+  ) {
+    return (value as { original?: unknown }).original;
+  }
+  return value;
+}
+
+function flattenRowsToOriginal(rows: TableRow[]): TableRow[] {
+  return rows.map((row) => {
+    const out: TableRow = {};
+    for (const [col, val] of Object.entries(row)) {
+      out[col] = resolveCellOriginal(val);
+    }
+    return out;
+  });
+}
 
 function getErrorMessage(error: unknown): string {
   const normalize = (message: string): string => {
@@ -335,12 +362,16 @@ export default function Upload() {
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [activeTableId, setActiveTableId] = useState<number | null>(null);
+  const [previewPage, setPreviewPage] = useState(1);
+  const [previewRowCount, setPreviewRowCount] = useState(0);
+  const [previewPageInput, setPreviewPageInput] = useState("1");
+  const [previewSearchQuery, setPreviewSearchQuery] = useState("");
+  const [previewSortColumn, setPreviewSortColumn] = useState<string | null>(null);
+  const [previewSortDirection, setPreviewSortDirection] = useState<"asc" | "desc">("asc");
   const [toast, setToast] = useState<ToastState | null>(null);
   const [deleteConfirmTable, setDeleteConfirmTable] = useState<TableSummary | null>(null);
   const [showScrollHint, setShowScrollHint] = useState(false);
   const [uploadedAtBottom, setUploadedAtBottom] = useState(false);
-  const [showPreviewScrollHint, setShowPreviewScrollHint] = useState(false);
-  const [previewAtBottom, setPreviewAtBottom] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editingName, setEditingName] = useState("");
   const [renameHintId, setRenameHintId] = useState<number | null>(null);
@@ -818,48 +849,57 @@ export default function Upload() {
     };
   }, [tables.length, tableSearchQuery]);
 
-  useEffect(() => {
-    const container = previewAreaRef.current;
-    const element = container?.querySelector(".table-scroll") as HTMLDivElement | null;
-    if (!element) {
-      setShowPreviewScrollHint(false);
-      setPreviewAtBottom(false);
-      return;
-    }
+  const loadPreview = useCallback(
+    async (
+      datasetId: number,
+      page = 1,
+      sortOverride?: { sortColumn: string | null; sortDirection: "asc" | "desc" },
+    ) => {
+      setActiveTableId(datasetId);
+      setPreviewPage(page);
+      setPreviewPageInput(String(page));
+      if (sortOverride) {
+        setPreviewSearchQuery("");
+        setPreviewSortColumn(sortOverride.sortColumn);
+        setPreviewSortDirection(sortOverride.sortDirection);
+      }
+      setPreviewBusy(true);
+      setPreviewErr(null);
 
-    const updateHint = () => {
-      const atBottom = element.scrollTop + element.clientHeight >= element.scrollHeight - 4;
-      const canScroll = element.scrollHeight > element.clientHeight + 2;
-      setShowPreviewScrollHint(canScroll);
-      setPreviewAtBottom(atBottom);
-    };
+      const effectiveSort = sortOverride ?? {
+        sortColumn: previewSortColumn,
+        sortDirection: previewSortDirection,
+      };
+      const sortParam = effectiveSort.sortColumn
+        ? {
+            sortColumn: effectiveSort.sortColumn,
+            sortDirection: effectiveSort.sortDirection,
+          }
+        : undefined;
+      const searchParam = previewSearchQuery.trim() || undefined;
 
-    const rafId = window.requestAnimationFrame(updateHint);
-    element.addEventListener("scroll", updateHint);
-    window.addEventListener("resize", updateHint);
+      const rowFrom = (page - 1) * PREVIEW_ROWS_PER_PAGE;
+      const rowTo = rowFrom + PREVIEW_ROWS_PER_PAGE;
+      try {
+        const slice = await getSlice(datasetId, rowFrom, rowTo, {
+          flatten: false,
+          sort: sortParam ?? undefined,
+          search: searchParam,
+        });
+        setPreview(slice);
+        setPreviewRowCount(Math.max(0, slice.row_count ?? 0));
+      } catch (error: unknown) {
+        setPreviewErr(getErrorMessage(error));
+        setPreview(null);
+      } finally {
+        setPreviewBusy(false);
+      }
+    },
+    [previewSortColumn, previewSortDirection, previewSearchQuery],
+  );
 
-    return () => {
-      window.cancelAnimationFrame(rafId);
-      element.removeEventListener("scroll", updateHint);
-      window.removeEventListener("resize", updateHint);
-    };
-  }, [preview?.dataset_id, preview?.rows.length, previewBusy, previewErr]);
-
-  const loadPreview = useCallback(async (datasetId: number) => {
-    setActiveTableId(datasetId);
-    setPreviewBusy(true);
-    setPreviewErr(null);
-
-    try {
-      const slice = await getSlice(datasetId, 0, 30);
-      setPreview(slice);
-    } catch (error: unknown) {
-      setPreviewErr(getErrorMessage(error));
-      setPreview(null);
-    } finally {
-      setPreviewBusy(false);
-    }
-  }, []);
+  const loadPreviewRef = useRef(loadPreview);
+  loadPreviewRef.current = loadPreview;
 
   useEffect(() => {
     if (tables.length === 0) {
@@ -867,12 +907,68 @@ export default function Upload() {
       setPreview(null);
       setPreviewErr(null);
       setPreviewBusy(false);
+      setPreviewPage(1);
+      setPreviewRowCount(0);
+      setPreviewSortColumn(null);
+      setPreviewSortDirection("asc");
       return;
     }
 
-    // Keep preview pinned to the most recent table (top row in Uploaded tables).
-    void loadPreview(tables[0].dataset_id);
-  }, [tables, loadPreview]);
+    // Restore selected table from storage if it exists in the list; otherwise use first table.
+    let datasetIdToLoad = tables[0].dataset_id;
+    try {
+      const raw = window.localStorage.getItem(SELECTED_PREVIEW_TABLE_KEY);
+      if (raw != null) {
+        const parsed = parseInt(raw, 10);
+        if (Number.isFinite(parsed) && tables.some((t) => t.dataset_id === parsed)) {
+          datasetIdToLoad = parsed;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    void loadPreviewRef.current(datasetIdToLoad, 1, { sortColumn: null, sortDirection: "asc" });
+  }, [tables]);
+
+  useEffect(() => {
+    if (activeTableId !== null && tables.some((t) => t.dataset_id === activeTableId)) {
+      try {
+        window.localStorage.setItem(SELECTED_PREVIEW_TABLE_KEY, String(activeTableId));
+      } catch {
+        /* ignore */
+      }
+    }
+  }, [activeTableId, tables]);
+
+  const previewRowsOriginal = useMemo(
+    () => (preview?.rows ? flattenRowsToOriginal(preview.rows) : []),
+    [preview?.rows],
+  );
+  const normalizedPreviewSearch = previewSearchQuery.trim().toLowerCase();
+  const hasPreviewSearch = normalizedPreviewSearch.length > 0;
+
+  useEffect(() => {
+    if (activeTableId === null) return;
+    const t = setTimeout(() => {
+      loadPreviewRef.current(activeTableId, 1);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [previewSearchQuery, activeTableId]);
+
+  const previewTotalPages = Math.max(1, Math.ceil(previewRowCount / PREVIEW_ROWS_PER_PAGE));
+  const previewSafeCurrentPage = Math.min(Math.max(1, previewPage), previewTotalPages);
+  const previewPageInputWidthCh = Math.max(2, String(previewTotalPages).length + 1);
+
+  function commitPreviewPageInput() {
+    const parsed = parseInt(previewPageInput, 10);
+    const nextPage = Number.isFinite(parsed)
+      ? Math.min(previewTotalPages, Math.max(1, parsed))
+      : previewSafeCurrentPage;
+    setPreviewPageInput(String(nextPage));
+    if (activeTableId !== null && nextPage !== previewPage) {
+      void loadPreview(activeTableId, nextPage);
+    }
+  }
 
   async function onUpload() {
     if (busy) {
@@ -993,7 +1089,7 @@ export default function Upload() {
     try {
       await refresh();
       if (lastUploadedDatasetId !== null) {
-        await loadPreview(lastUploadedDatasetId);
+        await loadPreview(lastUploadedDatasetId, 1, { sortColumn: null, sortDirection: "asc" });
       }
     } catch (error: unknown) {
       setErr(getErrorMessage(error));
@@ -1470,19 +1566,6 @@ export default function Upload() {
     element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
   }
 
-  function scrollPreviewToBottom() {
-    const container = previewAreaRef.current;
-    const element = container?.querySelector(".table-scroll") as HTMLDivElement | null;
-    if (!element) {
-      return;
-    }
-    if (previewAtBottom) {
-      element.scrollTo({ top: 0, behavior: "smooth" });
-      return;
-    }
-    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
-  }
-
   if (showOfflineView) {
     return (
       <div className="page page-stack">
@@ -1503,7 +1586,8 @@ export default function Upload() {
   }
 
   return (
-    <div className="page page-stack">
+    <div className="upload-home-page-scroll">
+      <div className="page page-stack upload-home-page">
       {toast && (
         <div key={toast.id} className="toast success" role="status" aria-live="polite">
           <span>{toast.message}</span>
@@ -1962,7 +2046,7 @@ export default function Upload() {
         )}
       </div>
 
-      <div className="panel" aria-hidden={isUploadDialogOpen}>
+      <div className="panel uploaded-tables-panel" aria-hidden={isUploadDialogOpen}>
         <div className="row tables-header-row">
           <h3 style={{ marginBottom: 0 }}>Uploaded tables</h3>
           <div className="tables-header-controls">
@@ -2119,7 +2203,7 @@ export default function Upload() {
                           type="button"
                           className="list-button"
                           onClick={() => {
-                            void loadPreview(table.dataset_id);
+                            void loadPreview(table.dataset_id, 1, { sortColumn: null, sortDirection: "asc" });
                           }}
                           aria-pressed={activeTableId === table.dataset_id}
                         >
@@ -2228,17 +2312,34 @@ export default function Upload() {
               </div>
             )}
           </div>
-          {activeTableId !== null && (
-            <Link
-              className="preview-open-icon-link"
-              to={`/tables/${activeTableId}`}
-              aria-label="View Full Table"
-              title="View Full Table"
-            >
-              <img src={openIcon} alt="" aria-hidden="true" />
-              <span>View Full Table</span>
-            </Link>
-          )}
+          <div className="preview-header-right">
+            {preview && (
+              <label className="tables-search-input-wrap preview-search-wrap" aria-label="Search in preview">
+                <svg viewBox="0 0 24 24" role="presentation" className="tables-search-icon" aria-hidden="true">
+                  <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" fill="currentColor" />
+                </svg>
+                <input
+                  type="text"
+                  className="tables-search-input preview-search-input"
+                  value={previewSearchQuery}
+                  onChange={(e) => setPreviewSearchQuery(e.target.value)}
+                  placeholder="Search"
+                  aria-label="Search in preview"
+                />
+              </label>
+            )}
+            {activeTableId !== null && (
+              <Link
+                className="preview-open-icon-link"
+                to={`/tables/${activeTableId}`}
+                aria-label="View Full Table"
+                title="View Full Table"
+              >
+                <img src={openIcon} alt="" aria-hidden="true" />
+                <span>View Full Table</span>
+              </Link>
+            )}
+          </div>
         </div>
 
         {previewBusy && (
@@ -2256,28 +2357,115 @@ export default function Upload() {
           <div className="table-area" ref={previewAreaRef}>
             <DataTable
               columns={preview.columns}
-              rows={preview.rows}
-              sortable={false}
-              caption={`Preview of ${activeTableName || "the selected table"}.`}
+              rows={previewRowsOriginal}
+              sortable
+              sortMode="server"
+              serverSortColumn={previewSortColumn}
+              serverSortDirection={previewSortDirection}
+              onSortChange={(column, direction) => {
+                if (activeTableId !== null) {
+                  void loadPreview(activeTableId, 1, {
+                    sortColumn: column,
+                    sortDirection: direction,
+                  });
+                }
+              }}
+              caption={`Preview of ${activeTableName || "the selected table"}. Showing original values.${hasPreviewSearch ? ` ${previewRowCount.toLocaleString()} matches.` : ""}`}
             />
           </div>
         )}
 
-        {showPreviewScrollHint && (
-          <button
-            type="button"
-            className="scroll-indicator preview-scroll-indicator"
-            onClick={scrollPreviewToBottom}
-            aria-label={previewAtBottom ? "Scroll table preview to top" : "Scroll table preview to bottom"}
-            title={previewAtBottom ? "Scroll to top" : "Scroll to bottom"}
-          >
-            {previewAtBottom ? "▲" : "▼"}
-          </button>
+        {preview && previewRowCount > 0 && (
+          <div className="table-view-pagination" aria-label="Table preview pagination">
+            <div className="table-view-pagination-controls">
+              <button
+                type="button"
+                className="table-view-page-btn"
+                disabled={previewSafeCurrentPage <= 1 || previewBusy}
+                onClick={() => activeTableId !== null && void loadPreview(activeTableId, 1)}
+                aria-label="First page"
+                title="First page"
+              >
+                {"<<"}
+              </button>
+              <button
+                type="button"
+                className="table-view-page-btn"
+                disabled={previewSafeCurrentPage <= 1 || previewBusy}
+                onClick={() =>
+                  activeTableId !== null &&
+                  previewSafeCurrentPage > 1 &&
+                  void loadPreview(activeTableId, previewSafeCurrentPage - 1)
+                }
+                aria-label="Previous page"
+                title="Previous page"
+              >
+                {"<"}
+              </button>
+              <span className="table-view-page-count">
+                Page{" "}
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  className="table-view-page-input"
+                  style={{ width: `${previewPageInputWidthCh}ch` }}
+                  value={previewPageInput}
+                  onChange={(e) => {
+                    const digitsOnly = e.target.value.replace(/[^\d]/g, "");
+                    setPreviewPageInput(digitsOnly);
+                  }}
+                  onBlur={commitPreviewPageInput}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitPreviewPageInput();
+                    else if (e.key === "Escape") setPreviewPageInput(String(previewSafeCurrentPage));
+                  }}
+                  disabled={previewBusy}
+                  aria-label="Current page number"
+                  title="Enter page number"
+                />{" "}
+                of {previewTotalPages}
+              </span>
+              <button
+                type="button"
+                className="table-view-page-btn"
+                disabled={previewSafeCurrentPage >= previewTotalPages || previewBusy}
+                onClick={() =>
+                  activeTableId !== null &&
+                  previewSafeCurrentPage < previewTotalPages &&
+                  void loadPreview(activeTableId, previewSafeCurrentPage + 1)
+                }
+                aria-label="Next page"
+                title="Next page"
+              >
+                {">"}
+              </button>
+              <button
+                type="button"
+                className="table-view-page-btn"
+                disabled={previewSafeCurrentPage >= previewTotalPages || previewBusy}
+                onClick={() =>
+                  activeTableId !== null && void loadPreview(activeTableId, previewTotalPages)
+                }
+                aria-label="Last page"
+                title="Last page"
+              >
+                {">>"}
+              </button>
+            </div>
+            <span className="table-view-pagination-meta">
+              Showing rows{" "}
+              {(previewSafeCurrentPage - 1) * PREVIEW_ROWS_PER_PAGE + 1}–
+              {Math.min(previewSafeCurrentPage * PREVIEW_ROWS_PER_PAGE, previewRowCount)} of{" "}
+              {previewRowCount}
+            </span>
+          </div>
         )}
 
         {!previewBusy && !preview && !previewErr && (
-          <p className="small">Select a table above to preview the first 30 rows.</p>
+          <p className="small">Select a table above to preview its rows.</p>
         )}
+      </div>
       </div>
     </div>
   );

@@ -1167,6 +1167,19 @@ h3 {
   overflow: hidden;
 }
 
+/* Full-width scroll container so the scrollbar sits at the right edge of the viewport */
+.upload-home-page-scroll {
+  height: 100%;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.page-stack.upload-home-page {
+  min-height: min-content;
+  overflow: visible;
+}
+
 .virtual-results-page {
   padding-top: 76px;
 }
@@ -1420,6 +1433,14 @@ ul {
   max-height: 124px;
   overflow: auto;
   padding: 6px 4px 2px 2px;
+}
+
+.uploaded-tables-panel {
+  max-height: 40vh;
+}
+
+.uploaded-tables-panel .tables-scroll {
+  max-height: 70vh;
 }
 
 .tables-header-row {
@@ -2032,26 +2053,27 @@ ul {
 }
 
 .upload-preview {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  min-height: 0;
+  height: auto;
 }
 
 .upload-preview .table-area {
-  height: clamp(280px, 48vh, 430px);
-  min-height: 0;
-  max-height: none;
+  flex: 0 0 auto;
   overflow: hidden;
 }
 
-.upload-preview .table-card {
+.upload-preview .table-area .card.table-card {
   padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .upload-preview .table-scroll {
-  height: 100%;
+  overflow: auto;
 }
 
 .preview-header {
@@ -2075,6 +2097,18 @@ ul {
 .preview-header-left h3 {
   margin: 0;
   line-height: 1;
+}
+
+.preview-header-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.preview-search-wrap {
+  width: min(200px, 100%);
 }
 
 .preview-table-name {
