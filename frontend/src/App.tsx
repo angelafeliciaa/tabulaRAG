@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, Route, Routes, useLocation } from "react-router-dom";
-import { logout, getUser, getServerStatus, type ServerStatus } from "./api";
+import { logout, getUser } from "./api";
 import logo from "./images/logo.png";
 import moonIcon from "./images/moon.png";
 import sunIcon from "./images/sun.png";
@@ -25,7 +25,6 @@ export default function App() {
     }
     return "light";
   });
-  const [serverStatus, setServerStatus] = useState<ServerStatus>("Unknown");
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     window.localStorage.setItem("theme", theme);
@@ -60,25 +59,6 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    let mounted = true;
-
-    async function checkStatus() {
-      const result = await getServerStatus();
-      if (mounted) {
-        setServerStatus(result.status);
-      }
-    }
-
-    checkStatus();
-    const intervalId = window.setInterval(checkStatus, 5000);
-
-    return () => {
-      mounted = false;
-      window.clearInterval(intervalId);
-    };
-  }, []);
-
   const user = getUser();
 
   function handleLogout() {
@@ -97,16 +77,6 @@ export default function App() {
       <a className="skip-link" href="#main-content">
         Skip to main content
       </a>
-
-      <div
-        className={`server-status ${serverStatus}`}
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-      >
-        <span className="status-dot" />
-        <span>Server Connection: {serverStatus}</span>
-      </div>
 
       <div className="top-bar">
         <div className="user-menu">

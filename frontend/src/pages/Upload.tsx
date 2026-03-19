@@ -901,33 +901,17 @@ export default function Upload() {
   const loadPreviewRef = useRef(loadPreview);
   loadPreviewRef.current = loadPreview;
 
+  // Faster page load: don't auto-fetch preview on initial render.
+  // Preview stays empty until the user selects a table.
   useEffect(() => {
-    if (tables.length === 0) {
-      setActiveTableId(null);
-      setPreview(null);
-      setPreviewErr(null);
-      setPreviewBusy(false);
-      setPreviewPage(1);
-      setPreviewRowCount(0);
-      setPreviewSortColumn(null);
-      setPreviewSortDirection("asc");
-      return;
-    }
-
-    // Restore selected table from storage if it exists in the list; otherwise use first table.
-    let datasetIdToLoad = tables[0].dataset_id;
-    try {
-      const raw = window.localStorage.getItem(SELECTED_PREVIEW_TABLE_KEY);
-      if (raw != null) {
-        const parsed = parseInt(raw, 10);
-        if (Number.isFinite(parsed) && tables.some((t) => t.dataset_id === parsed)) {
-          datasetIdToLoad = parsed;
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-    void loadPreviewRef.current(datasetIdToLoad, 1, { sortColumn: null, sortDirection: "asc" });
+    setActiveTableId(null);
+    setPreview(null);
+    setPreviewErr(null);
+    setPreviewBusy(false);
+    setPreviewPage(1);
+    setPreviewRowCount(0);
+    setPreviewSortColumn(null);
+    setPreviewSortDirection("asc");
   }, [tables]);
 
   useEffect(() => {
