@@ -361,6 +361,12 @@ export default function TableView() {
   }, [numericDatasetId]);
 
   useEffect(() => {
+    if (tableName) {
+      document.title = `${tableName} | TabulaRAG`;
+    }
+  }, [tableName]);
+
+  useEffect(() => {
     if (!isMultiHighlightMode) {
       setHighlightErr(null);
       setMultiHighlightRows([]);

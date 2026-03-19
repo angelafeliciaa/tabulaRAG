@@ -18,6 +18,13 @@ export default function App() {
     document.body.scrollTop = 0;
   }, [location.pathname, location.search]);
 
+  // Set tab title for the home page.
+  useEffect(() => {
+    if (location.pathname === "/") {
+      document.title = "Home | TabulaRAG";
+    }
+  }, [location.pathname]);
+
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     const storedTheme = window.localStorage.getItem("theme");
     if (storedTheme === "light" || storedTheme === "dark") {
