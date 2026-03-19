@@ -379,7 +379,8 @@ export async function getSlice(
 
   const res = await authFetch(url.toString(), { headers: authHeaders() });
   if (!res.ok) {
-    throw new Error(await res.text());
+    const text = await res.text();
+    throw new Error(text ? `${text} (${res.status})` : `Request failed (${res.status})`);
   }
 
   const data = (await res.json()) as TableSliceApiResponse;

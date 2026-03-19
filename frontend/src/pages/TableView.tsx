@@ -305,6 +305,7 @@ export default function TableView() {
   const [err, setErr] = useState<string | null>(null);
   const [highlightErr, setHighlightErr] = useState<string | null>(null);
   const [tableName, setTableName] = useState<string | null>(null);
+  const [tableNotFound, setTableNotFound] = useState(false);
   const [tableRowCount, setTableRowCount] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -336,6 +337,7 @@ export default function TableView() {
     setErr(null);
     setData(null);
     setTableName(null);
+    setTableNotFound(false);
     setTableRowCount(0);
     setDateMenu(null);
 
@@ -346,8 +348,12 @@ export default function TableView() {
           return;
         }
         const table = tables.find((row) => row.dataset_id === numericDatasetId);
-        setTableName(table?.name || null);
-        if (typeof table?.row_count === "number") {
+        if (!table) {
+          setTableNotFound(true);
+          return;
+        }
+        setTableName(table.name);
+        if (typeof table.row_count === "number") {
           setTableRowCount(Math.max(0, table.row_count));
         }
       })
@@ -361,10 +367,12 @@ export default function TableView() {
   }, [numericDatasetId]);
 
   useEffect(() => {
-    if (tableName) {
+    if (tableNotFound) {
+      document.title = "Error 404 | TabulaRAG";
+    } else if (tableName) {
       document.title = `${tableName} | TabulaRAG`;
     }
-  }, [tableName]);
+  }, [tableName, tableNotFound]);
 
   useEffect(() => {
     if (!isMultiHighlightMode) {
@@ -881,6 +889,32 @@ export default function TableView() {
         <p className="error" role="alert">
           Invalid table id.
         </p>
+      </div>
+    );
+  }
+
+  if (tableNotFound) {
+    return (
+      <div className="page-stack full-table-page">
+        <div className="table-view-back-row">
+          <Link className="table-view-context-btn" to="/" aria-label="Back to home" title="Back to home">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M20 11H7.83l4.59-4.59a1 1 0 1 0-1.42-1.41l-6.3 6.29a1 1 0 0 0 0 1.42l6.3 6.29a1 1 0 1 0 1.42-1.41L7.83 13H20a1 1 0 1 0 0-2Z" fill="currentColor" />
+            </svg>
+            Back to Home
+          </Link>
+        </div>
+        <div className="card" style={{ marginBottom: 12, textAlign: "center" }} role="alert">
+          <p style={{ margin: "0 0 4px 0", fontSize: 32, fontWeight: 700, color: "var(--brand-text)", letterSpacing: "-0.02em" }}>
+            404
+          </p>
+          <p style={{ margin: "0 0 8px 0", fontSize: 20, fontWeight: 700, color: "var(--brand-text)" }}>
+            Not Found
+          </p>
+          <p style={{ margin: 0, fontSize: 14, color: "var(--text-muted)" }}>
+            The table may have been deleted or the ID might be invalid.
+          </p>
+        </div>
       </div>
     );
   }
