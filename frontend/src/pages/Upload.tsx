@@ -946,7 +946,7 @@ export default function Upload() {
       } catch {
         /* ignore */
       }
-    } else if (activeTableId === null) {
+    } else if (activeTableId === null && tables.length > 0) {
       try {
         window.localStorage.removeItem(SELECTED_PREVIEW_TABLE_KEY);
       } catch {
@@ -2518,9 +2518,10 @@ export default function Upload() {
           </div>
         )}
 
-        {!previewBusy && !preview && !previewErr && tables.length > 0 && (
-          <p className="small">Select a table above to preview its rows.</p>
-        )}
+        {/*
+          When no table is selected, the preview panel is hidden (activeTableId === null),
+          so we don't need a "select a table" hint here.
+        */}
         </div>
       )}
       </div>
